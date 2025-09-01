@@ -1,0 +1,42 @@
+name: 📚 Documentation
+description: Mejoras o correcciones en la documentación
+title: "[DOCS] "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ayúdanos a mejorar la documentación de NinjaScript.
+  
+  - type: dropdown
+    id: doc-type
+    attributes:
+      label: Tipo de mejora
+      description: ¿Qué tipo de mejora en documentación?
+      options:
+        - Corrección de error/typo
+        - Información faltante
+        - Ejemplo de código
+        - Explicación más clara
+        - Nueva sección
+        - Traducción
+    validations:
+      required: true
+      
+  - type: input
+    id: doc-section
+    attributes:
+      label: Sección afectada
+      description: ¿Qué sección de la documentación?
+      placeholder: "ej. docs/01-fundamentos/onbarupdate.md"
+    validations:
+      required: true
+      
+  - type: textarea
+    id: improvement
+    attributes:
+      label: Mejora sugerida
+      description: Describe la mejora o corrección necesaria
+      placeholder: La documentación debería incluir...
+    validations:
+      required: true

@@ -1,0 +1,48 @@
+name: 🐛 Bug Report
+description: Reportar un error o problema
+title: "[BUG] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Gracias por reportar este bug. Por favor proporciona la mayor información posible.
+  
+  - type: input
+    id: ninjascript-version
+    attributes:
+      label: Versión de NinjaScript
+      description: ¿Qué versión de NinjaTrader estás usando?
+      placeholder: "ej. NinjaTrader 8.1.3.1"
+    validations:
+      required: true
+      
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: ¿Qué pasó?
+      description: Describe el problema que encontraste
+      placeholder: Describe el error paso a paso...
+    validations:
+      required: true
+      
+  - type: textarea
+    id: expected
+    attributes:
+      label: ¿Qué esperabas que pasara?
+      description: Describe el comportamiento esperado
+    validations:
+      required: true
+      
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: ¿Cómo reproducir el error?
+      description: Pasos para reproducir el comportamiento
+      placeholder: |
+        1. Ir a '...'
+        2. Hacer click en '....'
+        3. Scrollear hasta '....'
+        4. Ver error
+    validations:
+      required: true

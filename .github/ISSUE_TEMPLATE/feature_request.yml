@@ -1,0 +1,40 @@
+name: ✨ Feature Request
+description: Sugerir una nueva funcionalidad
+title: "[FEATURE] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ¡Gracias por sugerir una nueva funcionalidad para mejorar la documentación!
+  
+  - type: textarea
+    id: feature-description
+    attributes:
+      label: Descripción de la funcionalidad
+      description: Describe qué te gustaría que se añadiera
+      placeholder: Me gustaría que se añadiera...
+    validations:
+      required: true
+      
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Caso de uso
+      description: ¿Por qué esta funcionalidad sería útil?
+      placeholder: Esta funcionalidad sería útil porque...
+    validations:
+      required: true
+      
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Prioridad
+      description: ¿Qué tan importante es esta funcionalidad?
+      options:
+        - Baja
+        - Media
+        - Alta
+        - Crítica
+    validations:
+      required: true
