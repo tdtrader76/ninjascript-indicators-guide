@@ -1,0 +1,6 @@
+*.ntbak
+*.ntz
+bin/
+obj/
+.vs/
+*.log
