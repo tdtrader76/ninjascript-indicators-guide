@@ -92,6 +92,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 // Default Parameters
                 UseAutomaticDate = true;
+                UseGapCalculation = false;
                 SelectedDate = DateTime.Today;
                 ManualPrice = 0.0;
                 Width = 1; // Default line width
@@ -189,11 +190,40 @@ namespace NinjaTrader.NinjaScript.Indicators
                     if (priorDayHigh > 0 && priorDayLow > 0 && priorDayHigh >= priorDayLow)
                     {
                         double previousDayRange = priorDayHigh - priorDayLow;
+                        double priorDayClose = GetPriorDayClose(Time[0], true);
+
+                        if (UseGapCalculation)
+                        {
+                            Print($"DIAGNOSTIC: Initial previous day range = {priorDayHigh} (High) - {priorDayLow} (Low) = {previousDayRange}");
+                            // Ensure the daily data series is loaded and available
+                            if (BarsArray[1] != null && BarsArray[1].Count > 0)
+                            {
+                                // Get the index of the daily bar that corresponds to the current intraday bar
+                                int dailyIndex = BarsArray[1].GetBar(Time[0]);
+
+                                if (dailyIndex >= 0)
+                                {
+                                    // Get the "official" open from the current daily bar
+                                    double currentDailyOpen = BarsArray[1].GetOpen(dailyIndex);
+                                    Print($"GAP Calc: Using daily open of {currentDailyOpen} from daily candle at {BarsArray[1].GetTime(dailyIndex)} for intraday bar at {Time[0]}");
+                                    if (priorDayClose > 0 && currentDailyOpen > priorDayClose)
+                                    {
+                                        double gap = currentDailyOpen - priorDayClose;
+                                        Print($"DIAGNOSTIC: Gap calculation = {currentDailyOpen} (Open) - {priorDayClose} (Close) = {gap}");
+                                        
+                                        double originalRange = previousDayRange;
+                                        previousDayRange += (gap / 2.0);
+                                        Print($"DIAGNOSTIC: Modified range = {originalRange} (Initial Range) + {gap / 2.0} (Half Gap) = {previousDayRange}");
+                                    }
+                                }
+                            }
+                        }
+                        
                         double basePrice = ManualPrice;
 
                         if (basePrice.ApproxCompare(0) == 0)
                         {
-                            basePrice = GetPriorDayClose(Time[0]);
+                            basePrice = priorDayClose;
                         }
 
                         if (basePrice > 0)
@@ -269,7 +299,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             // This method is no longer needed as the variables it validated have been removed.
         }
 
-        private double GetPriorDayClose(DateTime time)
+        private double GetPriorDayClose(DateTime time, bool printLog = false)
         {
             // Ensure the daily series has data
             if (BarsArray[1] == null || BarsArray[1].Count < 2)
@@ -284,7 +314,16 @@ namespace NinjaTrader.NinjaScript.Indicators
             // If the index is valid and not the very first bar, we can get the previous bar's close
             if (dailyIndex > 0)
             {
-                return BarsArray[1].GetClose(dailyIndex - 1);
+                int priorDayIndex = dailyIndex - 1;
+                double priorDayClose = BarsArray[1].GetClose(priorDayIndex);
+
+                if (printLog)
+                {
+                    DateTime priorDayTime = BarsArray[1].GetTime(priorDayIndex);
+                    Print($"DIAGNOSTIC: Using prior day close of {priorDayClose} from daily candle at {priorDayTime} (triggered by bar at {time})");
+                }
+
+                return priorDayClose;
             }
             
             // Handle edge cases where the given time is before the second bar of the series
@@ -471,7 +510,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         public bool UseAutomaticDate { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Selected Date", Description = "Date for calculating levels (only used if 'Use Automatic Date' is false).", Order = 2, GroupName = "Parameters")]
+        [Display(Name = "GAP", Description = "If true, adds half of the opening gap-up to the previous day's range.", Order = 2, GroupName = "Parameters")]
+        public bool UseGapCalculation { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Selected Date", Description = "Date for calculating levels (only used if 'Use Automatic Date' is false).", Order = 3, GroupName = "Parameters")]
         public DateTime SelectedDate
         {
             get { return selectedDate; }
@@ -479,7 +522,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
 
         [NinjaScriptProperty]
-        [Display(Name = "Manual Price", Description = "Base price for levels. If 0, uses prior day's close.", Order = 3, GroupName = "Parameters")]
+        [Display(Name = "Manual Price", Description = "Base price for levels. If 0, uses prior day's close.", Order = 4, GroupName = "Parameters")]
         public double ManualPrice
         {
             get { return manualPrice; }
@@ -507,18 +550,18 @@ namespace NinjaTrader.NinjaScript.Indicators
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
 		private AvalP[] cacheAvalP;
-		public AvalP AvalP(bool useAutomaticDate, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public AvalP AvalP(bool useAutomaticDate, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
 		{
-			return AvalP(Input, useAutomaticDate, selectedDate, manualPrice, width, lineBufferPixels);
+			return AvalP(Input, useAutomaticDate, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
 		}
 
-		public AvalP AvalP(ISeries<double> input, bool useAutomaticDate, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public AvalP AvalP(ISeries<double> input, bool useAutomaticDate, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
 		{
 			if (cacheAvalP != null)
 				for (int idx = 0; idx < cacheAvalP.Length; idx++)
-					if (cacheAvalP[idx] != null && cacheAvalP[idx].UseAutomaticDate == useAutomaticDate && cacheAvalP[idx].SelectedDate == selectedDate && cacheAvalP[idx].ManualPrice == manualPrice && cacheAvalP[idx].Width == width && cacheAvalP[idx].LineBufferPixels == lineBufferPixels && cacheAvalP[idx].EqualsInput(input))
+					if (cacheAvalP[idx] != null && cacheAvalP[idx].UseAutomaticDate == useAutomaticDate && cacheAvalP[idx].UseGapCalculation == useGapCalculation && cacheAvalP[idx].SelectedDate == selectedDate && cacheAvalP[idx].ManualPrice == manualPrice && cacheAvalP[idx].Width == width && cacheAvalP[idx].LineBufferPixels == lineBufferPixels && cacheAvalP[idx].EqualsInput(input))
 						return cacheAvalP[idx];
-			return CacheIndicator<AvalP>(new AvalP(){ UseAutomaticDate = useAutomaticDate, SelectedDate = selectedDate, ManualPrice = manualPrice, Width = width, LineBufferPixels = lineBufferPixels }, input, ref cacheAvalP);
+			return CacheIndicator<AvalP>(new AvalP(){ UseAutomaticDate = useAutomaticDate, UseGapCalculation = useGapCalculation, SelectedDate = selectedDate, ManualPrice = manualPrice, Width = width, LineBufferPixels = lineBufferPixels }, input, ref cacheAvalP);
 		}
 	}
 }
@@ -527,14 +570,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.AvalP AvalP(bool useAutomaticDate, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public Indicators.AvalP AvalP(bool useAutomaticDate, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
 		{
-			return indicator.AvalP(Input, useAutomaticDate, selectedDate, manualPrice, width, lineBufferPixels);
+			return indicator.AvalP(Input, useAutomaticDate, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
 		}
 
-		public Indicators.AvalP AvalP(ISeries<double> input , bool useAutomaticDate, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public Indicators.AvalP AvalP(ISeries<double> input , bool useAutomaticDate, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
 		{
-			return indicator.AvalP(input, useAutomaticDate, selectedDate, manualPrice, width, lineBufferPixels);
+			return indicator.AvalP(input, useAutomaticDate, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
 		}
 	}
 }
@@ -543,14 +586,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.AvalP AvalP(bool useAutomaticDate, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public Indicators.AvalP AvalP(bool useAutomaticDate, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
 		{
-			return indicator.AvalP(Input, useAutomaticDate, selectedDate, manualPrice, width, lineBufferPixels);
+			return indicator.AvalP(Input, useAutomaticDate, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
 		}
 
-		public Indicators.AvalP AvalP(ISeries<double> input , bool useAutomaticDate, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public Indicators.AvalP AvalP(ISeries<double> input , bool useAutomaticDate, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
 		{
-			return indicator.AvalP(input, useAutomaticDate, selectedDate, manualPrice, width, lineBufferPixels);
+			return indicator.AvalP(input, useAutomaticDate, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
 		}
 	}
 }
