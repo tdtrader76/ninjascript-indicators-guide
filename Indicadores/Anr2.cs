@@ -21,6 +21,15 @@ using SharpDX;
 using SharpDX.Direct2D1;
 using SharpDX.DirectWrite;
 
+// Enum to define the chart corners for table positioning
+public enum ChartCorner
+{
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight
+}
+
 namespace NinjaTrader.NinjaScript.Indicators
 {
     public class Anr2 : Indicator
@@ -29,6 +38,13 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double previousDayRange, halfRange, nr2Level, maxCorrected, minCorrected;
         private double priorDayHigh, priorDayLow;
         private DateTime calculationDate = Core.Globals.MinDate;
+        private SessionIterator sessionIterator;
+        private DateTime currentDate = Core.Globals.MinDate;
+        private double currentDayOpen = 0;
+        private double gapValue = 0;
+        private double gapRangeValue = 0;
+        private double originalPDR = 0;
+        private double originalHalfRange = 0;
 
         private Bars dailyBars;
         private SharpDX.Direct2D1.SolidColorBrush backgroundBrush;
@@ -54,8 +70,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 UseManualDate = false;
                 ManualDate = DateTime.Now;
                 ManualNR2Level = 0;
-                PositionX = 700;
-                PositionY = 20;
+                TablePosition = ChartCorner.TopRight;
+                UseGapCalculation = false;
 
                 AddPlot(Brushes.Transparent, "DummyPlot");
             }
@@ -66,6 +82,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             else if (State == State.DataLoaded)
             {
                 dailyBars = BarsArray[1];
+                sessionIterator = new SessionIterator(Bars);
                 
                 backgroundBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color(0, 0, 0, 0)); // Transparent
                 borderBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color(255, 255, 255, 255)); // White
@@ -96,6 +113,13 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (CurrentBar < BarsRequiredToPlot || BarsArray[1] == null || BarsArray[1].Count < 1)
                 return;
 
+            // Session detection for getting the open of the day
+            if (sessionIterator.GetTradingDay(Time[0]) != currentDate)
+            {
+                currentDate = sessionIterator.GetTradingDay(Time[0]);
+                currentDayOpen = Open[0];
+            }
+
             // Determine the date for calculation
             calculationDate = GetCalculationDate();
             
@@ -108,15 +132,41 @@ namespace NinjaTrader.NinjaScript.Indicators
             priorDayHigh = dailyBars.GetHigh(dailyBarIndex);
             priorDayLow = dailyBars.GetLow(dailyBarIndex);
 
+            originalPDR = 0;
             if (priorDayHigh > 0 && priorDayLow > 0 && priorDayHigh >= priorDayLow)
             {
-                previousDayRange = priorDayHigh - priorDayLow;
-                halfRange = previousDayRange / 2;
+                originalPDR = priorDayHigh - priorDayLow;
+            }
+            originalHalfRange = originalPDR / 2;
+
+            double gap = 0;
+            if (UseGapCalculation)
+            {
+                double previousDayClose = GetPriorDayClose(Time[0]);
+                if (previousDayClose > 0 && currentDayOpen > 0)
+                {
+                    gap = Math.Abs(currentDayOpen - previousDayClose);
+                }
+            }
+
+            previousDayRange = originalPDR + gap; // previousDayRange is the modified range for calculations
+            halfRange = previousDayRange / 2;
+
+            // Store values for table
+            gapValue = gap / 2;
+            gapRangeValue = previousDayRange / 2;
+
+            if (!UseGapCalculation)
+            {
+                gapValue = 0;
+                gapRangeValue = 0;
             }
 
             nr2Level = ManualNR2Level;
-            if (nr2Level <= 0 && Close.IsValidDataPoint(0))
-                nr2Level = Close[0];
+            if (nr2Level <= 0)
+            {
+                nr2Level = GetPriorDayClose(Time[0]);
+            }
 
             maxCorrected = nr2Level + halfRange;
             minCorrected = nr2Level - halfRange;
@@ -137,18 +187,36 @@ namespace NinjaTrader.NinjaScript.Indicators
                 textFormat = simpleFont.ToDirectWriteTextFormat();
             }
 
-            SharpDX.Vector2 panelPosition = new SharpDX.Vector2(ChartPanel.X + PositionX, ChartPanel.Y + PositionY);
             float rowHeight = 20f;
             float columnWidth = 150f;
             float tableWidth = columnWidth * 2;
-            float tableHeight = rowHeight * 8; // Header + 7 rows
+            float tableHeight = rowHeight * 10; // Header + 9 rows
+            float margin = 20f;
+
+            SharpDX.Vector2 panelPosition;
+            switch (TablePosition)
+            {
+                case ChartCorner.TopRight:
+                    panelPosition = new SharpDX.Vector2(ChartPanel.X + ChartPanel.W - tableWidth - margin, ChartPanel.Y + margin);
+                    break;
+                case ChartCorner.BottomLeft:
+                    panelPosition = new SharpDX.Vector2(ChartPanel.X + margin, ChartPanel.Y + ChartPanel.H - tableHeight - margin);
+                    break;
+                case ChartCorner.BottomRight:
+                    panelPosition = new SharpDX.Vector2(ChartPanel.X + ChartPanel.W - tableWidth - margin, ChartPanel.Y + ChartPanel.H - tableHeight - margin);
+                    break;
+                case ChartCorner.TopLeft:
+                default:
+                    panelPosition = new SharpDX.Vector2(ChartPanel.X + margin, ChartPanel.Y + margin);
+                    break;
+            }
 
             SharpDX.RectangleF backgroundRect = new SharpDX.RectangleF(panelPosition.X, panelPosition.Y, tableWidth, tableHeight);
             
             RenderTarget.FillRectangle(backgroundRect, backgroundBrush);
             RenderTarget.DrawRectangle(backgroundRect, borderBrush, 1);
 
-            for (int i = 0; i <= 7; i++)
+            for (int i = 0; i <= 9; i++)
             {
                 SharpDX.Vector2 startPoint = new SharpDX.Vector2(panelPosition.X, panelPosition.Y + (i * rowHeight));
                 SharpDX.Vector2 endPoint = new SharpDX.Vector2(panelPosition.X + tableWidth, panelPosition.Y + (i * rowHeight));
@@ -162,22 +230,42 @@ namespace NinjaTrader.NinjaScript.Indicators
                 RenderTarget.DrawLine(startPoint, endPoint, borderBrush, 1);
             }
 
-            DrawText(RenderTarget, "Description", textFormat, textBrush, new SharpDX.RectangleF(panelPosition.X, panelPosition.Y, columnWidth, rowHeight));
-            DrawText(RenderTarget, "Value", textFormat, textBrush, new SharpDX.RectangleF(panelPosition.X + columnWidth, panelPosition.Y, columnWidth, rowHeight));
+            float textMargin = 5f;
+            DrawText(RenderTarget, "Description", textFormat, textBrush, new SharpDX.RectangleF(panelPosition.X + textMargin, panelPosition.Y, columnWidth - textMargin, rowHeight));
+            DrawText(RenderTarget, "Value", textFormat, textBrush, new SharpDX.RectangleF(panelPosition.X + columnWidth + textMargin, panelPosition.Y, columnWidth - textMargin, rowHeight));
 
-            string[] descriptions = { "Máximo", "Mínimo", "PDR", "Rango", "NR2 Level", "Max Corrected", "Min Corrected" };
-            double[] values = { priorDayHigh, priorDayLow, previousDayRange, halfRange, nr2Level, maxCorrected, minCorrected };
+            string[] descriptions = { "Máximo", "Mínimo", "PDR", "Rango", "GAP", "Rango GAP", "NR2 Level", "Max Corrected", "Min Corrected" };
+            double[] values = { priorDayHigh, priorDayLow, originalPDR, originalHalfRange, gapValue, gapRangeValue, nr2Level, maxCorrected, minCorrected };
 
             for (int i = 0; i < descriptions.Length; i++)
             {
-                DrawText(RenderTarget, descriptions[i], textFormat, textBrush, new SharpDX.RectangleF(panelPosition.X, panelPosition.Y + ((i + 1) * rowHeight), columnWidth, rowHeight));
+                DrawText(RenderTarget, descriptions[i], textFormat, textBrush, new SharpDX.RectangleF(panelPosition.X + textMargin, panelPosition.Y + ((i + 1) * rowHeight), columnWidth - textMargin, rowHeight));
                 string formattedValue = FormatPrice(values[i]);
-                DrawText(RenderTarget, formattedValue, textFormat, textBrush, new SharpDX.RectangleF(panelPosition.X + columnWidth, panelPosition.Y + ((i + 1) * rowHeight), columnWidth, rowHeight));
+                DrawText(RenderTarget, formattedValue, textFormat, textBrush, new SharpDX.RectangleF(panelPosition.X + columnWidth + textMargin, panelPosition.Y + ((i + 1) * rowHeight), columnWidth - textMargin, rowHeight));
             }
         }
         #endregion
 
         #region Helper Methods
+        private double GetPriorDayClose(DateTime time)
+        {
+            if (BarsArray[1] == null || BarsArray[1].Count < 2)
+            {
+                Log("DIAGNOSTIC: Daily series not ready or not enough data to find prior day's close.", LogLevel.Information);
+                return 0;
+            }
+
+            int dailyIndex = BarsArray[1].GetBar(time);
+
+            if (dailyIndex > 0)
+            {
+                return BarsArray[1].GetClose(dailyIndex - 1);
+            }
+
+            Log($"DIAGNOSTIC: Could not find a prior day's close for the date {time:d}. The provided time might be too early in the data series.", LogLevel.Information);
+            return 0;
+        }
+
         private DateTime GetCalculationDate()
         {
             if (UseManualDate)
@@ -231,12 +319,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         public double ManualNR2Level { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Position X", Description = "Horizontal position of the table", Order = 4, GroupName = "Parameters")]
-        public int PositionX { get; set; }
+        [Display(Name = "Table Position", Description = "Position of the data table on the chart.", Order = 4, GroupName = "Parameters")]
+        public ChartCorner TablePosition { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Position Y", Description = "Vertical position of the table", Order = 5, GroupName = "Parameters")]
-        public int PositionY { get; set; }
+        [Display(Name = "GAP", Description = "Enable to include the opening gap in the range calculation.", Order = 5, GroupName = "Parameters")]
+        public bool UseGapCalculation { get; set; }
 
         [Browsable(false)]
         [XmlIgnore]
@@ -252,18 +340,18 @@ namespace NinjaTrader.NinjaScript.Indicators
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
 		private Anr2[] cacheAnr2;
-		public Anr2 Anr2(bool useManualDate, DateTime manualDate, double manualNR2Level, int positionX, int positionY)
+		public Anr2 Anr2(bool useManualDate, DateTime manualDate, double manualNR2Level, ChartCorner tablePosition, bool useGapCalculation)
 		{
-			return Anr2(Input, useManualDate, manualDate, manualNR2Level, positionX, positionY);
+			return Anr2(Input, useManualDate, manualDate, manualNR2Level, tablePosition, useGapCalculation);
 		}
 
-		public Anr2 Anr2(ISeries<double> input, bool useManualDate, DateTime manualDate, double manualNR2Level, int positionX, int positionY)
+		public Anr2 Anr2(ISeries<double> input, bool useManualDate, DateTime manualDate, double manualNR2Level, ChartCorner tablePosition, bool useGapCalculation)
 		{
 			if (cacheAnr2 != null)
 				for (int idx = 0; idx < cacheAnr2.Length; idx++)
-					if (cacheAnr2[idx] != null && cacheAnr2[idx].UseManualDate == useManualDate && cacheAnr2[idx].ManualDate == manualDate && cacheAnr2[idx].ManualNR2Level == manualNR2Level && cacheAnr2[idx].PositionX == positionX && cacheAnr2[idx].PositionY == positionY && cacheAnr2[idx].EqualsInput(input))
+					if (cacheAnr2[idx] != null && cacheAnr2[idx].UseManualDate == useManualDate && cacheAnr2[idx].ManualDate == manualDate && cacheAnr2[idx].ManualNR2Level == manualNR2Level && cacheAnr2[idx].TablePosition == tablePosition && cacheAnr2[idx].UseGapCalculation == useGapCalculation && cacheAnr2[idx].EqualsInput(input))
 						return cacheAnr2[idx];
-			return CacheIndicator<Anr2>(new Anr2(){ UseManualDate = useManualDate, ManualDate = manualDate, ManualNR2Level = manualNR2Level, PositionX = positionX, PositionY = positionY }, input, ref cacheAnr2);
+			return CacheIndicator<Anr2>(new Anr2(){ UseManualDate = useManualDate, ManualDate = manualDate, ManualNR2Level = manualNR2Level, TablePosition = tablePosition, UseGapCalculation = useGapCalculation }, input, ref cacheAnr2);
 		}
 	}
 }
@@ -272,14 +360,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.Anr2 Anr2(bool useManualDate, DateTime manualDate, double manualNR2Level, int positionX, int positionY)
+		public Indicators.Anr2 Anr2(bool useManualDate, DateTime manualDate, double manualNR2Level, ChartCorner tablePosition, bool useGapCalculation)
 		{
-			return indicator.Anr2(Input, useManualDate, manualDate, manualNR2Level, positionX, positionY);
+			return indicator.Anr2(Input, useManualDate, manualDate, manualNR2Level, tablePosition, useGapCalculation);
 		}
 
-		public Indicators.Anr2 Anr2(ISeries<double> input , bool useManualDate, DateTime manualDate, double manualNR2Level, int positionX, int positionY)
+		public Indicators.Anr2 Anr2(ISeries<double> input , bool useManualDate, DateTime manualDate, double manualNR2Level, ChartCorner tablePosition, bool useGapCalculation)
 		{
-			return indicator.Anr2(input, useManualDate, manualDate, manualNR2Level, positionX, positionY);
+			return indicator.Anr2(input, useManualDate, manualDate, manualNR2Level, tablePosition, useGapCalculation);
 		}
 	}
 }
@@ -288,14 +376,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.Anr2 Anr2(bool useManualDate, DateTime manualDate, double manualNR2Level, int positionX, int positionY)
+		public Indicators.Anr2 Anr2(bool useManualDate, DateTime manualDate, double manualNR2Level, ChartCorner tablePosition, bool useGapCalculation)
 		{
-			return indicator.Anr2(Input, useManualDate, manualDate, manualNR2Level, positionX, positionY);
+			return indicator.Anr2(Input, useManualDate, manualDate, manualNR2Level, tablePosition, useGapCalculation);
 		}
 
-		public Indicators.Anr2 Anr2(ISeries<double> input , bool useManualDate, DateTime manualDate, double manualNR2Level, int positionX, int positionY)
+		public Indicators.Anr2 Anr2(ISeries<double> input , bool useManualDate, DateTime manualDate, double manualNR2Level, ChartCorner tablePosition, bool useGapCalculation)
 		{
-			return indicator.Anr2(input, useManualDate, manualDate, manualNR2Level, positionX, positionY);
+			return indicator.Anr2(input, useManualDate, manualDate, manualNR2Level, tablePosition, useGapCalculation);
 		}
 	}
 }
