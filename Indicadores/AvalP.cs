@@ -93,12 +93,15 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // Default Parameters
                 UseAutomaticDate = true;
                 SelectedDate = DateTime.Today;
-                ManualPrice = 23000.0;
-                Width = 2; // Default line width
+                ManualPrice = 0.0;
+                Width = 1; // Default line width
                 LineBufferPixels = 125; // Default buffer for the line drawing
             }
             else if (State == State.Configure)
             {
+                // Add the daily data series for prior day's close
+                AddDataSeries(Bars.Instrument.FullName, BarsPeriodType.Day, 1);
+
                 // Initialize the price levels
                 InitializePriceLevels();
 
@@ -186,8 +189,18 @@ namespace NinjaTrader.NinjaScript.Indicators
                     if (priorDayHigh > 0 && priorDayLow > 0 && priorDayHigh >= priorDayLow)
                     {
                         double previousDayRange = priorDayHigh - priorDayLow;
-                        CalculateAllLevels(previousDayRange, ManualPrice);
-                        needsLayoutUpdate = true;
+                        double basePrice = ManualPrice;
+
+                        if (basePrice.ApproxCompare(0) == 0)
+                        {
+                            basePrice = GetPriorDayClose(Time[0]);
+                        }
+
+                        if (basePrice > 0)
+                        {
+                            CalculateAllLevels(previousDayRange, basePrice);
+                            needsLayoutUpdate = true;
+                        }
                     }
 
                     if (Open.IsValidDataPoint(0) && High.IsValidDataPoint(0) && Low.IsValidDataPoint(0))
@@ -256,6 +269,29 @@ namespace NinjaTrader.NinjaScript.Indicators
             // This method is no longer needed as the variables it validated have been removed.
         }
 
+        private double GetPriorDayClose(DateTime time)
+        {
+            // Ensure the daily series has data
+            if (BarsArray[1] == null || BarsArray[1].Count < 2)
+            {
+                Print("DIAGNOSTIC: Daily series not ready or not enough data to find prior day's close.");
+                return 0;
+            }
+
+            // Get the index of the daily bar corresponding to the given time
+            int dailyIndex = BarsArray[1].GetBar(time);
+
+            // If the index is valid and not the very first bar, we can get the previous bar's close
+            if (dailyIndex > 0)
+            {
+                return BarsArray[1].GetClose(dailyIndex - 1);
+            }
+            
+            // Handle edge cases where the given time is before the second bar of the series
+            Print($"DIAGNOSTIC: Could not find a prior day's close for the date {time:d}. The provided time might be too early in the data series.");
+            return 0;
+        }
+
         private void CalculateLevelsForDate()
         {
             if (Bars == null || Bars.Count == 0)
@@ -297,9 +333,18 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Print($"DIAGNOSTIC: Calculated range: {range}");
                 if (range > 0)
                 {
-                    Print("DIAGNOSTIC: Range is valid. Calculating all levels.");
-                    CalculateAllLevels(range, ManualPrice);
-                    needsLayoutUpdate = true;
+                    double basePrice = ManualPrice;
+                    if (basePrice.ApproxCompare(0) == 0)
+                    {
+                        basePrice = GetPriorDayClose(SelectedDate);
+                    }
+
+                    if (basePrice > 0)
+                    {
+                        Print("DIAGNOSTIC: Range is valid. Calculating all levels.");
+                        CalculateAllLevels(range, basePrice);
+                        needsLayoutUpdate = true;
+                    }
                 }
                 else
                 {
@@ -434,7 +479,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
 
         [NinjaScriptProperty]
-        [Display(Name = "Manual Price", Description = "Base price for calculating levels", Order = 3, GroupName = "Parameters")]
+        [Display(Name = "Manual Price", Description = "Base price for levels. If 0, uses prior day's close.", Order = 3, GroupName = "Parameters")]
         public double ManualPrice
         {
             get { return manualPrice; }
