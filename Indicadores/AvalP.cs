@@ -212,7 +212,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                                         Print($"DIAGNOSTIC: Gap calculation = {currentDailyOpen} (Open) - {priorDayClose} (Close) = {gap}");
                                         
                                         double originalRange = previousDayRange;
-                                        previousDayRange += (gap / 2.0);
+                                        previousDayRange += (gap);
                                         Print($"DIAGNOSTIC: Modified range = {originalRange} (Initial Range) + {gap / 2.0} (Half Gap) = {previousDayRange}");
                                     }
                                 }
