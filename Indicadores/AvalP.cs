@@ -192,35 +192,26 @@ namespace NinjaTrader.NinjaScript.Indicators
                         double previousDayRange = priorDayHigh - priorDayLow;
                         double priorDayClose = GetPriorDayClose(Time[0], true);
 
+                        double gap = 0;
                         if (UseGapCalculation)
                         {
-                            Print($"DIAGNOSTIC: Initial previous day range = {priorDayHigh} (High) - {priorDayLow} (Low) = {previousDayRange}");
-                            // Ensure the daily data series is loaded and available
                             if (BarsArray[1] != null && BarsArray[1].Count > 0)
                             {
-                                // Get the index of the daily bar that corresponds to the current intraday bar
                                 int dailyIndex = BarsArray[1].GetBar(Time[0]);
-
                                 if (dailyIndex >= 0)
                                 {
-                                    // Get the "official" open from the current daily bar
                                     double currentDailyOpen = BarsArray[1].GetOpen(dailyIndex);
-                                    Print($"GAP Calc: Using daily open of {currentDailyOpen} from daily candle at {BarsArray[1].GetTime(dailyIndex)} for intraday bar at {Time[0]}");
-                                    if (priorDayClose > 0 && currentDailyOpen > priorDayClose)
+                                    // Use ApproxCompare for robust floating point comparison to see if there is any gap
+                                    if (priorDayClose > 0 && currentDailyOpen.ApproxCompare(priorDayClose) != 0)
                                     {
-                                        double gap = currentDailyOpen - priorDayClose;
-                                        Print($"DIAGNOSTIC: Gap calculation = {currentDailyOpen} (Open) - {priorDayClose} (Close) = {gap}");
-                                        
-                                        double originalRange = previousDayRange;
-                                        previousDayRange += (gap);
-                                        Print($"DIAGNOSTIC: Modified range = {originalRange} (Initial Range) + {gap / 2.0} (Half Gap) = {previousDayRange}");
+                                        gap = currentDailyOpen - priorDayClose;
+                                        previousDayRange += Math.Abs(gap);
                                     }
                                 }
                             }
                         }
                         
                         double basePrice = ManualPrice;
-
                         if (basePrice.ApproxCompare(0) == 0)
                         {
                             basePrice = priorDayClose;
@@ -228,6 +219,20 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                         if (basePrice > 0)
                         {
+                            Print("--- Resumen de Cálculo de Niveles ---");
+                            if (UseGapCalculation && gap.ApproxCompare(0) != 0)
+                            {
+                                Print($"Gap de Hoy: {gap:F2} (Abs: {Math.Abs(gap):F2})");
+                                Print($"Mitad del Gap: {gap / 2.0:F2}");
+                                Print($"Rango para Cálculo (con Gap): {previousDayRange:F2}");
+                            }
+                            else
+                            {
+                                Print("Modo: Sin Gap o Gap no aplicable.");
+                                Print($"Rango para Cálculo: {previousDayRange:F2}");
+                            }
+                            Print("------------------------------------");
+
                             CalculateAllLevels(previousDayRange, basePrice);
                             needsLayoutUpdate = true;
                         }
@@ -510,7 +515,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         public bool UseAutomaticDate { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "GAP", Description = "If true, adds half of the opening gap-up to the previous day's range.", Order = 2, GroupName = "Parameters")]
+        [Display(Name = "GAP", Description = "If true, adds the opening gap (up or down) to the previous day's range.", Order = 2, GroupName = "Parameters")]
         public bool UseGapCalculation { get; set; }
 
         [NinjaScriptProperty]
