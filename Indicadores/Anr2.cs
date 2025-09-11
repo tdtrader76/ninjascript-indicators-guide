@@ -83,10 +83,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 dailyBars = BarsArray[1];
                 sessionIterator = new SessionIterator(Bars);
-                
-                backgroundBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color(0, 0, 0, 0)); // Transparent
-                borderBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color(255, 255, 255, 255)); // White
-                textBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color(255, 255, 255, 255)); // White
             }
             else if (State == State.Historical)
             {
@@ -121,7 +117,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
 
             // Determine the date for calculation
-            calculationDate = GetCalculationDate();
+            calculationDate = GetCalculationDate(currentDate);
             
             // Find the index of the calculation date in the daily bars series
             int dailyBarIndex = dailyBars.GetBar(calculationDate);
@@ -181,7 +177,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (ChartPanel == null || RenderTarget == null || previousDayRange <= 0)
                 return;
 
-            if (textFormat == null)
+            // Lazy initialization of SharpDX resources
+            if (backgroundBrush == null || backgroundBrush.IsDisposed)
+                backgroundBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color(0, 0, 0, 0)); // Transparent
+            if (borderBrush == null || borderBrush.IsDisposed)
+                borderBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color(255, 255, 255, 255)); // White
+            if (textBrush == null || textBrush.IsDisposed)
+                textBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color(255, 255, 255, 255)); // White
+            if (textFormat == null || textFormat.IsDisposed)
             {
                 NinjaTrader.Gui.Tools.SimpleFont simpleFont = chartControl.Properties.LabelFont ?? new NinjaTrader.Gui.Tools.SimpleFont("Arial", 10);
                 textFormat = simpleFont.ToDirectWriteTextFormat();
@@ -266,24 +269,23 @@ namespace NinjaTrader.NinjaScript.Indicators
             return 0;
         }
 
-        private DateTime GetCalculationDate()
+        private DateTime GetCalculationDate(DateTime baseDate)
         {
             if (UseManualDate)
                 return ManualDate.Date;
 
-            DateTime today = DateTime.Now.Date;
-            DateTime calcDate = today.AddDays(-1); // Default to yesterday
+            DateTime calcDate = baseDate.AddDays(-1); // Default to yesterday
 
-            switch (today.DayOfWeek)
+            switch (baseDate.DayOfWeek)
             {
                 case DayOfWeek.Monday:
-                    calcDate = today.AddDays(-3);
+                    calcDate = baseDate.AddDays(-3);
                     break;
                 case DayOfWeek.Sunday:
-                    calcDate = today.AddDays(-2);
+                    calcDate = baseDate.AddDays(-2);
                     break;
                 case DayOfWeek.Saturday:
-                    calcDate = today.AddDays(-1);
+                    calcDate = baseDate.AddDays(-1); // For Saturday, previous day is Friday.
                     break;
             }
             return calcDate;
