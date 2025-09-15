@@ -49,6 +49,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double priorDayHigh;
         private double priorDayLow;
         private double priorDayOpen;
+        private int firstBarOfCurrentDay = -1;
 
 
         // A dictionary to hold all price levels for easier management
@@ -124,6 +125,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     priorDayHigh = 0;
                     priorDayLow = 0;
                     priorDayOpen = 0;
+                    firstBarOfCurrentDay = -1;
                     sessionIterator = null;
                     break;
 
@@ -237,6 +239,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         currentDayLow = Low[0];
                     }
                     currentDate = tradingDay;
+                    firstBarOfCurrentDay = CurrentBar;
                 }
                 else
                 {
@@ -579,6 +582,10 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (priceLevels.Count == 0 || !priceLevels.TryGetValue("Q1", out PriceLevel q1) || double.IsNaN(q1.Value))
                 return;
 
+            // Solo dibujar si tenemos un día actual válido y niveles calculados
+            if (firstBarOfCurrentDay < 0)
+                return;
+
             // Actualizar layouts solo si es necesario
             if (needsLayoutUpdate)
             {
@@ -590,13 +597,19 @@ namespace NinjaTrader.NinjaScript.Indicators
             int lastBarIndex = ChartBars?.ToIndex ?? -1;
             if (lastBarIndex < 0) return;
 
-            // Precalcular valores que se usan múltiples veces
+            // Determinar el punto de inicio de las líneas (primera vela del día actual)
+            int startBarIndex = firstBarOfCurrentDay >= 0 ? firstBarOfCurrentDay : 0;
+
+            // Para líneas que se extienden dinámicamente, usar desde firstBarOfCurrentDay hasta la última barra + 10 píxeles
+            double startBarX = startBarIndex >= 0 ? chartControl.GetXByBarIndex(ChartBars, startBarIndex) : ChartPanel?.X ?? 0;
+            float lineStartX = (float)startBarX;
+
+            // Encontrar la última barra visible y extender 10 píxeles después
             double lastBarX = chartControl.GetXByBarIndex(ChartBars, lastBarIndex);
-            float lineEndX = (float)(lastBarX + LineBufferPixels);
-            float lineStartX = ChartPanel?.X ?? 0;
+            float lineEndX = (float)(lastBarX + 10);
             
-            // Asegurar que las coordenadas estén dentro de los límites del panel
-            lineEndX = Math.Min(lineEndX, lineStartX + (ChartPanel?.W ?? 0));
+            // Verificar que tenemos coordenadas válidas
+            if (lineEndX <= lineStartX) return;
 
             // Verificación de límites temprana
             if (lineEndX < lineStartX)
