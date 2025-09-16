@@ -367,7 +367,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double ApplyGapCalculation(double previousDayRange, double priorDayClose, DateTime time)
         {
             Print($"DIAGNOSTIC: Initial previous day range = {previousDayRange}");
-            
+
             // Ensure the daily data series is loaded and available
             if (BarsArray[1] != null && BarsArray[1].Count > 0)
             {
@@ -379,19 +379,23 @@ namespace NinjaTrader.NinjaScript.Indicators
                     // Get the "official" open from the current daily bar
                     double currentDailyOpen = BarsArray[1].GetOpen(dailyIndex);
                     Print($"GAP Calc: Using daily open of {currentDailyOpen} from daily candle at {BarsArray[1].GetTime(dailyIndex)} for intraday bar at {time}");
-                    
-                    if (priorDayClose > 0 && currentDailyOpen > priorDayClose)
+
+                    if (priorDayClose > 0 && currentDailyOpen != priorDayClose)
                     {
-                        double gap = currentDailyOpen - priorDayClose;
-                        Print($"DIAGNOSTIC: Gap calculation = {currentDailyOpen} (Open) - {priorDayClose} (Close) = {gap}");
-                        
+                        double gap = Math.Abs(currentDailyOpen - priorDayClose);
+                        Print($"DIAGNOSTIC: Gap calculation = |{currentDailyOpen} (Open) - {priorDayClose} (Close)| = {gap}");
+
                         double originalRange = previousDayRange;
-                        previousDayRange += gap; // Agregar el gap completo, no la mitad
+                        previousDayRange += gap;
                         Print($"DIAGNOSTIC: Modified range = {originalRange} (Initial Range) + {gap} (Gap) = {previousDayRange}");
+                    }
+                    else if (priorDayClose > 0)
+                    {
+                        Print($"DIAGNOSTIC: No gap detected - Open: {currentDailyOpen}, Close: {priorDayClose}");
                     }
                 }
             }
-            
+
             return previousDayRange;
         }
 
