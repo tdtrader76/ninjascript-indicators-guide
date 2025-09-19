@@ -2,17 +2,11 @@ using System;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Windows;
-using System.Windows.Input;
 using System.Windows.Media;
 using System.Xml.Serialization;
 using NinjaTrader.Cbi;
 using NinjaTrader.Gui;
 using NinjaTrader.Gui.Chart;
-using NinjaTrader.Gui.SuperDom;
-using NinjaTrader.Gui.Tools;
 using NinjaTrader.Data;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.Core.FloatingPoint;
@@ -21,7 +15,6 @@ using SharpDX;
 using SharpDX.Direct2D1;
 using SharpDX.DirectWrite;
 
-// Enum to define the chart corners for table positioning
 public enum ChartCorner
 {
     TopLeft,
@@ -40,17 +33,17 @@ namespace NinjaTrader.NinjaScript.Indicators
         private DateTime calculationDate = Core.Globals.MinDate;
         private SessionIterator sessionIterator;
         private DateTime currentDate = Core.Globals.MinDate;
-        private double currentDayOpen = 0;
+        
         private double gapValue = 0;
         private double gapRangeValue = 0;
         private double originalPDR = 0;
-        private double originalHalfRange = 0;
 
         private Bars dailyBars;
         private SharpDX.Direct2D1.SolidColorBrush backgroundBrush;
         private SharpDX.Direct2D1.SolidColorBrush borderBrush;
         private SharpDX.Direct2D1.SolidColorBrush textBrush;
         private SharpDX.DirectWrite.TextFormat textFormat;
+		private bool manualCalculationDone = false;
         #endregion
 
         #region OnStateChange
@@ -89,12 +82,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (!Bars.BarsType.IsIntraday)
                 {
                     Draw.TextFixed(this, "NinjaScriptInfo", "Anr2 only works on intraday charts", TextPosition.BottomRight);
-                    Log("Anr2 only works on intraday charts", LogLevel.Error);
                 }
             }
             else if (State == State.Terminated)
             {
-                // Dispose of brushes
                 if (backgroundBrush != null) backgroundBrush.Dispose();
                 if (borderBrush != null) borderBrush.Dispose();
                 if (textBrush != null) textBrush.Dispose();
@@ -106,66 +97,147 @@ namespace NinjaTrader.NinjaScript.Indicators
         #region OnBarUpdate
         protected override void OnBarUpdate()
         {
-            if (CurrentBar < BarsRequiredToPlot || BarsArray[1] == null || BarsArray[1].Count < 1)
+            if (CurrentBar < BarsRequiredToPlot || dailyBars == null || dailyBars.Count < 2)
                 return;
 
-            // Session detection for getting the open of the day
-            if (sessionIterator.GetTradingDay(Time[0]) != currentDate)
+            if (UseManualDate)
             {
-                currentDate = sessionIterator.GetTradingDay(Time[0]);
-                currentDayOpen = Open[0];
-            }
+                if (manualCalculationDone) return;
 
-            // Determine the date for calculation
-            calculationDate = GetCalculationDate(currentDate);
-            
-            // Find the index of the calculation date in the daily bars series
-            int dailyBarIndex = dailyBars.GetBar(calculationDate);
-            if (dailyBarIndex < 0)
-                return;
+                Print("--- MANUAL CALCULATION ---");
+                calculationDate = ManualDate.Date;
+                Print($"Calculation Date: {calculationDate:d}");
 
-            // Get high and low of that day
-            priorDayHigh = dailyBars.GetHigh(dailyBarIndex);
-            priorDayLow = dailyBars.GetLow(dailyBarIndex);
-
-            originalPDR = 0;
-            if (priorDayHigh > 0 && priorDayLow > 0 && priorDayHigh >= priorDayLow)
-            {
-                originalPDR = priorDayHigh - priorDayLow;
-            }
-            originalHalfRange = originalPDR / 2;
-
-            double gap = 0;
-            if (UseGapCalculation)
-            {
-                double previousDayClose = GetPriorDayClose(Time[0]);
-                if (previousDayClose > 0 && currentDayOpen > 0)
+                int dailyBarIndex = dailyBars.GetBar(calculationDate);
+                if (dailyBarIndex < 1)
                 {
-                    gap = Math.Abs(currentDayOpen - previousDayClose);
+                    Print("Error: Could not find data for the selected manual date.");
+                    return;
+                }
+
+                priorDayHigh = dailyBars.GetHigh(dailyBarIndex);
+                priorDayLow = dailyBars.GetLow(dailyBarIndex);
+                Print($"High for {calculationDate:d}: {FormatPrice(priorDayHigh)}");
+                Print($"Low for {calculationDate:d}: {FormatPrice(priorDayLow)}");
+
+                if (priorDayHigh > 0 && priorDayLow > 0 && priorDayHigh >= priorDayLow)
+                {
+                    originalPDR = priorDayHigh - priorDayLow;
+                }
+                Print($"Initial Range (PDR): {FormatPrice(originalPDR)}");
+
+                double gap = 0;
+                if (UseGapCalculation)
+                {
+                    Print("GAP Calculation Enabled");
+                    double priorDayClose = dailyBars.GetClose(dailyBarIndex - 1);
+                    double dayOpen = dailyBars.GetOpen(dailyBarIndex);
+                    Print($"Prior Day Close ({calculationDate.AddDays(-1):d}): {FormatPrice(priorDayClose)}");
+                    Print($"Selected Day Open ({calculationDate:d}): {FormatPrice(dayOpen)}");
+
+                    if (priorDayClose > 0 && dayOpen > 0)
+                    {
+                        gap = Math.Abs(dayOpen - priorDayClose);
+                    }
+                    Print($"Calculated GAP: {FormatPrice(gap)}");
+                }
+
+                previousDayRange = originalPDR + gap;
+                halfRange = previousDayRange / 2;
+                gapValue = gap / 2;
+                gapRangeValue = previousDayRange / 2;
+                
+                Print($"Final Range (with GAP): {FormatPrice(previousDayRange)}");
+
+                nr2Level = ManualNR2Level;
+                if (nr2Level <= 0)
+                {
+                    nr2Level = dailyBars.GetClose(dailyBarIndex - 1);
+                    Print($"NR2 Level (auto from prior close): {FormatPrice(nr2Level)}");
+                }
+                else
+                {
+                    Print($"NR2 Level (manual input): {FormatPrice(nr2Level)}");
+                }
+
+                maxCorrected = nr2Level + halfRange;
+                minCorrected = nr2Level - halfRange;
+                
+                Print("--- FINAL LEVELS ---");
+                Print($"Max Corrected: {FormatPrice(maxCorrected)}");
+                Print($"Min Corrected: {FormatPrice(minCorrected)}");
+                Print("---------------------");
+
+                manualCalculationDone = true;
+				ForceRefresh();
+            }
+            else // Automatic Mode
+            {
+                if (sessionIterator.GetTradingDay(Time[0]) != currentDate)
+                {
+                    currentDate = sessionIterator.GetTradingDay(Time[0]);
+                    Print($"--- AUTOMATIC CALCULATION for {currentDate:d} ---");
+
+                    calculationDate = GetCalculationDate(currentDate);
+                    Print($"Previous Trading Day: {calculationDate:d}");
+
+                    int dailyBarIndex = dailyBars.GetBar(calculationDate);
+                    if (dailyBarIndex < 1) return;
+
+                    priorDayHigh = dailyBars.GetHigh(dailyBarIndex);
+                    priorDayLow = dailyBars.GetLow(dailyBarIndex);
+                    Print($"High for {calculationDate:d}: {FormatPrice(priorDayHigh)}");
+                    Print($"Low for {calculationDate:d}: {FormatPrice(priorDayLow)}");
+
+                    if (priorDayHigh > 0 && priorDayLow > 0 && priorDayHigh >= priorDayLow)
+                    {
+                        originalPDR = priorDayHigh - priorDayLow;
+                    }
+                    Print($"Initial Range (PDR): {FormatPrice(originalPDR)}");
+
+                    double gap = 0;
+                    if (UseGapCalculation)
+                    {
+                        Print("GAP Calculation Enabled");
+                        double previousDayClose = dailyBars.GetClose(dailyBarIndex);
+                        double currentDayOpen = Open[0];
+                        Print($"Prior Day Close ({calculationDate:d}): {FormatPrice(previousDayClose)}");
+                        Print($"Current Day Open ({currentDate:d}): {FormatPrice(currentDayOpen)}");
+
+                        if (previousDayClose > 0 && currentDayOpen > 0)
+                        {
+                            gap = Math.Abs(currentDayOpen - previousDayClose);
+                        }
+                        Print($"Calculated GAP: {FormatPrice(gap)}");
+                    }
+
+                    previousDayRange = originalPDR + gap;
+                    halfRange = previousDayRange / 2;
+                    gapValue = gap / 2;
+                    gapRangeValue = previousDayRange / 2;
+                    
+                    Print($"Final Range (with GAP): {FormatPrice(previousDayRange)}");
+
+                    nr2Level = ManualNR2Level;
+                    if (nr2Level <= 0)
+                    {
+                        nr2Level = dailyBars.GetClose(dailyBarIndex);
+                        Print($"NR2 Level (auto from prior close): {FormatPrice(nr2Level)}");
+                    }
+                    else
+                    {
+                         Print($"NR2 Level (manual input): {FormatPrice(nr2Level)}");
+                    }
+
+                    maxCorrected = nr2Level + halfRange;
+                    minCorrected = nr2Level - halfRange;
+
+                    Print("--- FINAL LEVELS ---");
+                    Print($"Max Corrected: {FormatPrice(maxCorrected)}");
+                    Print($"Min Corrected: {FormatPrice(minCorrected)}");
+                    Print("---------------------");
                 }
             }
-
-            previousDayRange = originalPDR + gap; // previousDayRange is the modified range for calculations
-            halfRange = previousDayRange / 2;
-
-            // Store values for table
-            gapValue = gap / 2;
-            gapRangeValue = previousDayRange / 2;
-
-            if (!UseGapCalculation)
-            {
-                gapValue = 0;
-                gapRangeValue = 0;
-            }
-
-            nr2Level = ManualNR2Level;
-            if (nr2Level <= 0)
-            {
-                nr2Level = GetPriorDayClose(Time[0]);
-            }
-
-            maxCorrected = nr2Level + halfRange;
-            minCorrected = nr2Level - halfRange;
         }
         #endregion
 
@@ -174,16 +246,15 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             base.OnRender(chartControl, chartScale);
 
-            if (ChartPanel == null || RenderTarget == null || previousDayRange <= 0)
+            if (ChartPanel == null || RenderTarget == null || (UseManualDate && !manualCalculationDone) || originalPDR <= 0)
                 return;
 
-            // Lazy initialization of SharpDX resources
             if (backgroundBrush == null || backgroundBrush.IsDisposed)
-                backgroundBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color(0, 0, 0, 0)); // Transparent
+                backgroundBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color(0, 0, 0, 0));
             if (borderBrush == null || borderBrush.IsDisposed)
-                borderBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color(255, 255, 255, 255)); // White
+                borderBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color(255, 255, 255, 255));
             if (textBrush == null || textBrush.IsDisposed)
-                textBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color(255, 255, 255, 255)); // White
+                textBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color(255, 255, 255, 255));
             if (textFormat == null || textFormat.IsDisposed)
             {
                 NinjaTrader.Gui.Tools.SimpleFont simpleFont = chartControl.Properties.LabelFont ?? new NinjaTrader.Gui.Tools.SimpleFont("Arial", 10);
@@ -193,7 +264,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             float rowHeight = 20f;
             float columnWidth = 150f;
             float tableWidth = columnWidth * 2;
-            float tableHeight = rowHeight * 10; // Header + 9 rows
+            float tableHeight = rowHeight * 10;
             float margin = 20f;
 
             SharpDX.Vector2 panelPosition;
@@ -238,7 +309,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             DrawText(RenderTarget, "Value", textFormat, textBrush, new SharpDX.RectangleF(panelPosition.X + columnWidth + textMargin, panelPosition.Y, columnWidth - textMargin, rowHeight));
 
             string[] descriptions = { "Máximo", "Mínimo", "PDR", "Rango", "GAP", "Rango GAP", "NR2 Level", "Max Corrected", "Min Corrected" };
-            double[] values = { priorDayHigh, priorDayLow, originalPDR, originalHalfRange, gapValue, gapRangeValue, nr2Level, maxCorrected, minCorrected };
+            double[] values = { priorDayHigh, priorDayLow, originalPDR, originalPDR / 2, gapValue, halfRange, nr2Level, maxCorrected, minCorrected };
 
             for (int i = 0; i < descriptions.Length; i++)
             {
@@ -250,25 +321,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         #endregion
 
         #region Helper Methods
-        private double GetPriorDayClose(DateTime time)
-        {
-            if (BarsArray[1] == null || BarsArray[1].Count < 2)
-            {
-                Log("DIAGNOSTIC: Daily series not ready or not enough data to find prior day's close.", LogLevel.Information);
-                return 0;
-            }
-
-            int dailyIndex = BarsArray[1].GetBar(time);
-
-            if (dailyIndex > 0)
-            {
-                return BarsArray[1].GetClose(dailyIndex - 1);
-            }
-
-            Log($"DIAGNOSTIC: Could not find a prior day's close for the date {time:d}. The provided time might be too early in the data series.", LogLevel.Information);
-            return 0;
-        }
-
         private DateTime GetCalculationDate(DateTime baseDate)
         {
             if (UseManualDate)

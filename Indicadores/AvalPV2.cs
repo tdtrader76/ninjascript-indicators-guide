@@ -26,13 +26,7 @@ using System.Xml.Serialization;
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
-    public enum NR2LevelType
-    {
-        PreviousDayClose,
-        CurrentDayOpen
-    }
-
-    public class AvalPV1 : Indicator
+    public class AvalPV2 : Indicator
     {
         #region Variables
         // Input Parameters
@@ -90,7 +84,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 case State.SetDefaults:
                     Description = @"Calculates and displays price levels based on the previous day's range and a manual price.";
-                    Name = "AvalPV1";
+                    Name = "AvalPV2";
                     Calculate = Calculate.OnBarClose;
                     IsOverlay = true;
                     DisplayInDataBox = true;
@@ -163,7 +157,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     
                     if (!Bars.BarsType.IsIntraday)
                     {
-                        Draw.TextFixed(this, "NinjaScriptInfo", "AvalPV1 only works on intraday charts", TextPosition.BottomRight);
+                        Draw.TextFixed(this, "NinjaScriptInfo", "AvalPV2 only works on intraday charts", TextPosition.BottomRight);
                         return;
                     }
                     
@@ -463,11 +457,20 @@ namespace NinjaTrader.NinjaScript.Indicators
                 
                 if (range > 0)
                 {
+                    // Aplicar cálculo de GAP si está habilitado
+                    if (UseGapCalculation)
+                    {
+                        double priorDayClose = GetPriorDayClose(SelectedDate);
+                        range = ApplyGapCalculation(range, priorDayClose, SelectedDate);
+                    }
+
                     // Obtener precio base para cálculo de niveles
                     double basePrice = ManualPrice;
                     if (basePrice.ApproxCompare(0) == 0)
                     {
-                        basePrice = GetBasePriceForNR2(SelectedDate, GetPriorDayClose(SelectedDate));
+                        // Usar el mismo priorDayClose para evitar volver a calcularlo
+                        double priorClose = GetPriorDayClose(SelectedDate);
+                        basePrice = GetBasePriceForNR2(SelectedDate, priorClose);
                     }
 
                     // Calcular todos los niveles si tenemos un precio base válido
