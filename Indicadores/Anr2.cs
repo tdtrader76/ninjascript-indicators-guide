@@ -66,7 +66,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                 TablePosition = ChartCorner.TopRight;
                 UseGapCalculation = false;
 
-                AddPlot(Brushes.Transparent, "DummyPlot");
+                AddPlot(Brushes.Transparent, "MaxCorrected");
+                AddPlot(Brushes.Transparent, "MinCorrected");
+                AddPlot(Brushes.Transparent, "NR2Level");
+                AddPlot(Brushes.Transparent, "PriorDayHigh");
+                AddPlot(Brushes.Transparent, "PriorDayLow");
+                AddPlot(Brushes.Transparent, "PDR");
+                AddPlot(Brushes.Transparent, "GapValue");
+                AddPlot(Brushes.Transparent, "PreviousDayRange");
             }
             else if (State == State.Configure)
             {
@@ -238,6 +245,15 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Print("---------------------");
                 }
             }
+
+            if (maxCorrected > 0) MaxCorrected[0] = maxCorrected;
+            if (minCorrected > 0) MinCorrected[0] = minCorrected;
+            if (nr2Level > 0) NR2Level[0] = nr2Level;
+            if (priorDayHigh > 0) PriorDayHigh[0] = priorDayHigh;
+            if (priorDayLow > 0) PriorDayLow[0] = priorDayLow;
+            if (originalPDR > 0) PDR[0] = originalPDR;
+            if (gapValue > 0) GapValue[0] = gapValue;
+            if (previousDayRange > 0) PreviousDayRange[0] = previousDayRange;
         }
         #endregion
 
@@ -382,7 +398,35 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         [Browsable(false)]
         [XmlIgnore]
-        public Series<double> DummyPlot { get { return Values[0]; } }
+        public Series<double> MaxCorrected { get { return Values[0]; } }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> MinCorrected { get { return Values[1]; } }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> NR2Level { get { return Values[2]; } }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> PriorDayHigh { get { return Values[3]; } }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> PriorDayLow { get { return Values[4]; } }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> PDR { get { return Values[5]; } }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> GapValue { get { return Values[6]; } }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> PreviousDayRange { get { return Values[7]; } }
         #endregion
     }
 }

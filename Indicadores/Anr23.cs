@@ -35,7 +35,7 @@ namespace NinjaTrader.NinjaScript.Indicators
     /// <summary>
     /// Indicator that displays a table with NR2 levels and price range information
     /// </summary>
-    public class Anr2 : Indicator
+    public class Anr23 : Indicator
     {
         #region Variables
         private double previousDayRange = 0;
@@ -62,7 +62,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (State == State.SetDefaults)
             {
                 Description = @"Displays a table with NR2 levels and price range information";
-                Name = "Anr2";
+                Name = "Anr23";
                 Calculate = Calculate.OnBarClose;
                 IsOverlay = true;
                 DisplayInDataBox = false;
@@ -434,19 +434,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 {
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
-		private Anr2[] cacheAnr2;
-		public Anr2 Anr2(double userNR2Level, ChartCorner tablePosition)
+		private Anr23[] cacheAnr23;
+		public Anr23 Anr23(double userNR2Level, ChartCorner tablePosition)
 		{
-			return Anr2(Input, userNR2Level, tablePosition);
+			return Anr23(Input, userNR2Level, tablePosition);
 		}
 
-		public Anr2 Anr2(ISeries<double> input, double userNR2Level, ChartCorner tablePosition)
+		public Anr23 Anr23(ISeries<double> input, double userNR2Level, ChartCorner tablePosition)
 		{
-			if (cacheAnr2 != null)
-				for (int idx = 0; idx < cacheAnr2.Length; idx++)
-					if (cacheAnr2[idx] != null && cacheAnr2[idx].UserNR2Level == userNR2Level && cacheAnr2[idx].TablePosition == tablePosition && cacheAnr2[idx].EqualsInput(input))
-						return cacheAnr2[idx];
-			return CacheIndicator<Anr2>(new Anr2(){ UserNR2Level = userNR2Level, TablePosition = tablePosition }, input, ref cacheAnr2);
+			if (cacheAnr23 != null)
+				for (int idx = 0; idx < cacheAnr23.Length; idx++)
+					if (cacheAnr23[idx] != null && cacheAnr23[idx].UserNR2Level == userNR2Level && cacheAnr23[idx].TablePosition == tablePosition && cacheAnr23[idx].EqualsInput(input))
+						return cacheAnr23[idx];
+			return CacheIndicator<Anr23>(new Anr23(){ UserNR2Level = userNR2Level, TablePosition = tablePosition }, input, ref cacheAnr23);
 		}
 	}
 }
@@ -455,14 +455,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.Anr2 Anr2(double userNR2Level, ChartCorner tablePosition)
+		public Indicators.Anr23 Anr23(double userNR2Level, ChartCorner tablePosition)
 		{
-			return indicator.Anr2(Input, userNR2Level, tablePosition);
+			return indicator.Anr23(Input, userNR2Level, tablePosition);
 		}
 
-		public Indicators.Anr2 Anr2(ISeries<double> input , double userNR2Level, ChartCorner tablePosition)
+		public Indicators.Anr23 Anr23(ISeries<double> input , double userNR2Level, ChartCorner tablePosition)
 		{
-			return indicator.Anr2(input, userNR2Level, tablePosition);
+			return indicator.Anr23(input, userNR2Level, tablePosition);
 		}
 	}
 }
@@ -471,14 +471,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.Anr2 Anr2(double userNR2Level, ChartCorner tablePosition)
+		public Indicators.Anr23 Anr23(double userNR2Level, ChartCorner tablePosition)
 		{
-			return indicator.Anr2(Input, userNR2Level, tablePosition);
+			return indicator.Anr23(Input, userNR2Level, tablePosition);
 		}
 
-		public Indicators.Anr2 Anr2(ISeries<double> input , double userNR2Level, ChartCorner tablePosition)
+		public Indicators.Anr23 Anr23(ISeries<double> input , double userNR2Level, ChartCorner tablePosition)
 		{
-			return indicator.Anr2(input, userNR2Level, tablePosition);
+			return indicator.Anr23(input, userNR2Level, tablePosition);
 		}
 	}
 }
