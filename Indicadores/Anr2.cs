@@ -118,14 +118,16 @@ namespace NinjaTrader.NinjaScript.Indicators
                 int dailyBarIndex = dailyBars.GetBar(calculationDate);
                 if (dailyBarIndex < 1)
                 {
-                    Print("Error: Could not find data for the selected manual date.");
+                    Print("Error: Could not find data for the selected manual date or there is no prior day data.");
                     return;
                 }
+				
+				DateTime priorDayDate = dailyBars.GetTime(dailyBarIndex - 1).Date;
 
-                priorDayHigh = dailyBars.GetHigh(dailyBarIndex);
-                priorDayLow = dailyBars.GetLow(dailyBarIndex);
-                Print($"High for {calculationDate:d}: {FormatPrice(priorDayHigh)}");
-                Print($"Low for {calculationDate:d}: {FormatPrice(priorDayLow)}");
+                priorDayHigh = dailyBars.GetHigh(dailyBarIndex - 1);
+                priorDayLow = dailyBars.GetLow(dailyBarIndex - 1);
+                Print($"High for {priorDayDate:d}: {FormatPrice(priorDayHigh)}");
+                Print($"Low for {priorDayDate:d}: {FormatPrice(priorDayLow)}");
 
                 if (priorDayHigh > 0 && priorDayLow > 0 && priorDayHigh >= priorDayLow)
                 {
@@ -139,7 +141,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Print("GAP Calculation Enabled");
                     double priorDayClose = dailyBars.GetClose(dailyBarIndex - 1);
                     double dayOpen = dailyBars.GetOpen(dailyBarIndex);
-                    Print($"Prior Day Close ({calculationDate.AddDays(-1):d}): {FormatPrice(priorDayClose)}");
+                    Print($"Prior Day Close ({priorDayDate:d}): {FormatPrice(priorDayClose)}");
                     Print($"Selected Day Open ({calculationDate:d}): {FormatPrice(dayOpen)}");
 
                     if (priorDayClose > 0 && dayOpen > 0)

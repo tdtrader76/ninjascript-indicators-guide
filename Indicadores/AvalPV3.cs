@@ -550,65 +550,63 @@ namespace NinjaTrader.NinjaScript.Indicators
                 double range050 = dayRange * 0.50;
                 double range0125 = dayRange * 0.125;
                 
-                // Asignar valores a los niveles y a los plots
-		        priceLevels["Q1"].Value = q1Level;
-		        if (q1Level > 0) Q1[0] = q1Level;
-
-		        priceLevels["Q4"].Value = q4Level;
-		        if (q4Level > 0) Q4[0] = q4Level;
-
-		        priceLevels["Q2"].Value = RoundToQuarter(q1Level - range025);
-		        if (priceLevels["Q2"].Value > 0) Q2[0] = priceLevels["Q2"].Value;
-
-		        priceLevels["Q3"].Value = RoundToQuarter(q4Level + range025);
-		        if (priceLevels["Q3"].Value > 0) Q3[0] = priceLevels["Q3"].Value;
-
-		        priceLevels["Q2/3"].Value = RoundToQuarter(q1Level - range0375);
-		        if (priceLevels["Q2/3"].Value > 0) Q2_3[0] = priceLevels["Q2/3"].Value;
-
-		        priceLevels["Q3/4"].Value = RoundToQuarter(q4Level + range0375);
-		        if (priceLevels["Q3/4"].Value > 0) Q3_4[0] = priceLevels["Q3/4"].Value;
-
-		        priceLevels["NR2"].Value = RoundToQuarter(basePrice);
-		        if (priceLevels["NR2"].Value > 0) NR2[0] = priceLevels["NR2"].Value;
-
-		        priceLevels["TC"].Value = RoundToQuarter(q1Level - range_tc_std1);
-		        if (priceLevels["TC"].Value > 0) TC[0] = priceLevels["TC"].Value;
-
-		        priceLevels["NR1"].Value = RoundToQuarter(q1Level - range_nr1_std2);
-		        if (priceLevels["NR1"].Value > 0) NR1[0] = priceLevels["NR1"].Value;
-
-		        priceLevels["Std1+"].Value = RoundToQuarter(q1Level + range_tc_std1);
-		        if (priceLevels["Std1+"].Value > 0) Std1Plus[0] = priceLevels["Std1+"].Value;
-
-		        priceLevels["Std2+"].Value = RoundToQuarter(q1Level + range_nr1_std2);
-		        if (priceLevels["Std2+"].Value > 0) Std2Plus[0] = priceLevels["Std2+"].Value;
-
-		        priceLevels["Std3+"].Value = RoundToQuarter(q1Level + range_std3);
-		        if (priceLevels["Std3+"].Value > 0) Std3Plus[0] = priceLevels["Std3+"].Value;
-
-		        priceLevels["1D+"].Value = RoundToQuarter(q1Level + range050);
-		        if (priceLevels["1D+"].Value > 0) OneDPlus[0] = priceLevels["1D+"].Value;
-
-		        priceLevels["NR3"].Value = RoundToQuarter(q4Level + range0159);
-		        if (priceLevels["NR3"].Value > 0) NR3[0] = priceLevels["NR3"].Value;
-
-		        priceLevels["TV"].Value = RoundToQuarter(q4Level + range0125);
-		        if (priceLevels["TV"].Value > 0) TV[0] = priceLevels["TV"].Value;
-
-		        priceLevels["Std1-"].Value = RoundToQuarter(q4Level - range_tc_std1);
-		        if (priceLevels["Std1-"].Value > 0) Std1Minus[0] = priceLevels["Std1-"].Value;
-
-		        priceLevels["Std2-"].Value = RoundToQuarter(q4Level - range_nr1_std2);
-		        if (priceLevels["Std2-"].Value > 0) Std2Minus[0] = priceLevels["Std2-"].Value;
-
-		        priceLevels["Std3-"].Value = RoundToQuarter(q4Level - range_std3);
-		        if (priceLevels["Std3-"].Value > 0) Std3Minus[0] = priceLevels["Std3-"].Value;
-
-		        priceLevels["1D-"].Value = RoundToQuarter(q4Level - range050);
-		        if (priceLevels["1D-"].Value > 0) OneDMinus[0] = priceLevels["1D-"].Value;
-                
-                // Mostrar los niveles calculados en el output
+                		        		        // Asignar valores a los niveles y a los plots
+                		        		        priceLevels["Q1"].Value = q1Level;
+                		        		        if (CurrentBar >= 0 && q1Level > 0) Q1[0] = q1Level;
+                		        
+                		        		        priceLevels["Q4"].Value = q4Level;
+                		        		        if (CurrentBar >= 0 && q4Level > 0) Q4[0] = q4Level;
+                		        
+                		        		        priceLevels["Q2"].Value = RoundToQuarter(q1Level - range025);
+                		        		        if (CurrentBar >= 0 && priceLevels["Q2"].Value > 0) Q2[0] = priceLevels["Q2"].Value;
+                		        
+                		        		        priceLevels["Q3"].Value = RoundToQuarter(q4Level + range025);
+                		        		        if (CurrentBar >= 0 && priceLevels["Q3"].Value > 0) Q3[0] = priceLevels["Q3"].Value;
+                		        
+                		        		        priceLevels["Q2/3"].Value = RoundToQuarter(q1Level - range0375);
+                		        		        if (CurrentBar >= 0 && priceLevels["Q2/3"].Value > 0) Q2_3[0] = priceLevels["Q2/3"].Value;
+                		        
+                		        		        priceLevels["Q3/4"].Value = RoundToQuarter(q4Level + range0375);
+                		        		        if (CurrentBar >= 0 && priceLevels["Q3/4"].Value > 0) Q3_4[0] = priceLevels["Q3/4"].Value;
+                		        
+                		        		        priceLevels["NR2"].Value = RoundToQuarter(basePrice);
+                		        		        if (CurrentBar >= 0 && priceLevels["NR2"].Value > 0) NR2[0] = priceLevels["NR2"].Value;
+                		        
+                		        		        priceLevels["TC"].Value = RoundToQuarter(q1Level - range_tc_std1);
+                		        		        if (CurrentBar >= 0 && priceLevels["TC"].Value > 0) TC[0] = priceLevels["TC"].Value;
+                		        
+                		        		        priceLevels["NR1"].Value = RoundToQuarter(q1Level - range_nr1_std2);
+                		        		        if (CurrentBar >= 0 && priceLevels["NR1"].Value > 0) NR1[0] = priceLevels["NR1"].Value;
+                		        
+                		        		        priceLevels["Std1+"].Value = RoundToQuarter(q1Level + range_tc_std1);
+                		        		        if (CurrentBar >= 0 && priceLevels["Std1+"].Value > 0) Std1Plus[0] = priceLevels["Std1+"].Value;
+                		        
+                		        		        priceLevels["Std2+"].Value = RoundToQuarter(q1Level - range_nr1_std2);
+                		        		        if (CurrentBar >= 0 && priceLevels["Std2+"].Value > 0) Std2Plus[0] = priceLevels["Std2+"].Value;
+                		        
+                		        		        priceLevels["Std3+"].Value = RoundToQuarter(q1Level + range_std3);
+                		        		        if (CurrentBar >= 0 && priceLevels["Std3+"].Value > 0) Std3Plus[0] = priceLevels["Std3+"].Value;
+                		        
+                		        		        priceLevels["1D+"].Value = RoundToQuarter(q1Level + range050);
+                		        		        if (CurrentBar >= 0 && priceLevels["1D+"].Value > 0) OneDPlus[0] = priceLevels["1D+"].Value;
+                		        
+                		        		        priceLevels["NR3"].Value = RoundToQuarter(q4Level + range0159);
+                		        		        if (CurrentBar >= 0 && priceLevels["NR3"].Value > 0) NR3[0] = priceLevels["NR3"].Value;
+                		        
+                		        		        priceLevels["TV"].Value = RoundToQuarter(q4Level + range0125);
+                		        		        if (CurrentBar >= 0 && priceLevels["TV"].Value > 0) TV[0] = priceLevels["TV"].Value;
+                		        
+                		        		        priceLevels["Std1-"].Value = RoundToQuarter(q4Level - range_tc_std1);
+                		        		        if (CurrentBar >= 0 && priceLevels["Std1-"].Value > 0) Std1Minus[0] = priceLevels["Std1-"].Value;
+                		        
+                		        		        priceLevels["Std2-"].Value = RoundToQuarter(q4Level - range_nr1_std2);
+                		        		        if (CurrentBar >= 0 && priceLevels["Std2-"].Value > 0) Std2Minus[0] = priceLevels["Std2-"].Value;
+                		        
+                		        		        priceLevels["Std3-"].Value = RoundToQuarter(q4Level - range_std3);
+                		        		        if (CurrentBar >= 0 && priceLevels["Std3-"].Value > 0) Std3Minus[0] = priceLevels["Std3-"].Value;
+                		        
+                		        		        priceLevels["1D-"].Value = RoundToQuarter(q4Level - range050);
+                		        		        if (CurrentBar >= 0 && priceLevels["1D-"].Value > 0) OneDMinus[0] = priceLevels["1D-"].Value;                // Mostrar los niveles calculados en el output
                 Print($"--- NIVELES CALCULADOS ---");
                 Print($"Rango del día: {dayRange:F5}");
                 Print($"Precio base (NR2): {priceLevels["NR2"].Value:F5}");
