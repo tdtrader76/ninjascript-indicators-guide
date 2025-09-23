@@ -36,6 +36,22 @@ namespace NinjaTrader.NinjaScript.Indicators
     public class AvalPV4 : Indicator
     {
         #region Variables
+
+        // A class to hold all data related to a single day's levels
+        private class DayLevels
+        {
+            public Dictionary<string, PriceLevel> Levels { get; }
+            public int StartBarIndex { get; set; }
+            public int EndBarIndex { get; set; }
+
+            public DayLevels()
+            {
+                Levels = new Dictionary<string, PriceLevel>();
+                StartBarIndex = -1;
+                EndBarIndex = -1;
+            }
+        }
+
         // Input Parameters
         private DateTime selectedDate;
         private double manualPrice;
@@ -50,17 +66,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double priorDayHigh;
         private double priorDayLow;
         private double priorDayOpen;
-        		private int firstBarOfCurrentDay = -1;
-        		private int manualStartBar = -1;
-        		private int manualEndBar = -1;
+        private int manualStartBar = -1;
+        private int manualEndBar = -1;
 
-        // Dictionaries to hold price levels for current and previous day
-        private Dictionary<string, PriceLevel> currentPriceLevels = new Dictionary<string, PriceLevel>();
-        private Dictionary<string, PriceLevel> previousPriceLevels = new Dictionary<string, PriceLevel>();
-
-		// Bar indices for drawing previous day's lines
-		private int previousDayStartBar = -1;
-		private int previousDayEndBar = -1;
+        // Data structures for managing current and historical price levels
+        private DayLevels currentDayLevels;
+        private readonly Queue<DayLevels> historicalLevels = new Queue<DayLevels>();
 
         // Represents a calculated price level
         private class PriceLevel : IDisposable
@@ -81,7 +92,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             public void Dispose()
             {
-                // Liberar recursos de manera segura
                 LabelLayout?.Dispose();
                 LabelLayout = null;
             }
@@ -111,6 +121,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                     // Default Parameters
                     UseAutomaticDate = true;
+                    DaysToDraw = 5;
                     Nr2LevelType = NR2LevelType.PreviousDayClose;
                     UseGapCalculation = false;
                     SelectedDate = DateTime.Today;
@@ -144,9 +155,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                     // Add the daily data series for prior day's close
                     AddDataSeries(Bars.Instrument.FullName, BarsPeriodType.Day, 1);
 
-                    // Initialize the price levels
-                    InitializePriceLevels(currentPriceLevels);
-                	InitializePriceLevels(previousPriceLevels);
+                    // Initialize the price levels structure for the current day
+                    currentDayLevels = new DayLevels();
+                    InitializePriceLevels(currentDayLevels.Levels);
 
                     // Reset session variables
                     currentDate = Core.Globals.MinDate;
@@ -156,9 +167,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                     priorDayHigh = 0;
                     priorDayLow = 0;
                     priorDayOpen = 0;
-                    					firstBarOfCurrentDay = -1;
-                    					manualStartBar = -1;
-                                        manualEndBar = -1;                    sessionIterator = null;
+                    manualStartBar = -1;
+                    manualEndBar = -1;
+                    sessionIterator = null;
                     break;
 
                 case State.DataLoaded:
@@ -183,10 +194,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                         brush?.Dispose();
                     dxBrushes.Clear();
 
-                    foreach (var level in currentPriceLevels.Values)
-                        level?.Dispose();
-					foreach (var level in previousPriceLevels.Values)
-                        level?.Dispose();
+                    // Dispose of all level objects
+                    if (currentDayLevels != null)
+                        foreach (var level in currentDayLevels.Levels.Values) level?.Dispose();
+                    
+                    foreach(var day in historicalLevels)
+                        foreach (var level in day.Levels.Values) level?.Dispose();
+                    
                     break;
 
                 case State.Historical:
@@ -253,15 +267,23 @@ namespace NinjaTrader.NinjaScript.Indicators
                 
                 if (isNewDay)
                 {
-                    // Archive drawing range for the day that just ended.
-					previousDayStartBar = firstBarOfCurrentDay;
-					previousDayEndBar = CurrentBar - 1;
+                    // Finalize the day that just ended and add it to the historical queue
+                    if (currentDayLevels != null && currentDayLevels.StartBarIndex != -1)
+                    {
+                        currentDayLevels.EndBarIndex = CurrentBar - 1;
+                        historicalLevels.Enqueue(currentDayLevels);
 
-					// Swap dictionaries to archive the old levels
-					var tempLevels = previousPriceLevels;
-					previousPriceLevels = currentPriceLevels;
-					currentPriceLevels = tempLevels;
-					InitializePriceLevels(currentPriceLevels); // Re-initialize the now-current dictionary
+                        // Maintain the queue size
+                        if (historicalLevels.Count > DaysToDraw)
+                        {
+                            historicalLevels.Dequeue();
+                        }
+                    }
+
+                    // Start a new day
+                    currentDayLevels = new DayLevels();
+                    currentDayLevels.StartBarIndex = CurrentBar;
+                    InitializePriceLevels(currentDayLevels.Levels);
 
                     // Guardar valores del día anterior
                     priorDayHigh = currentDayHigh;
@@ -290,7 +312,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         if (basePrice > 0)
                         {
                             Print($"DIAGNOSTIC: Using {Nr2LevelType} for NR2 level calculation");
-                            CalculateAllLevels(previousDayRange, basePrice, currentPriceLevels);
+                            CalculateAllLevels(previousDayRange, basePrice, currentDayLevels.Levels);
                             needsLayoutUpdate = true;
                         }
                     }
@@ -303,7 +325,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                         currentDayLow = Low[0];
                     }
                     currentDate = tradingDay;
-                    firstBarOfCurrentDay = CurrentBar;
                 }
                 else
                 {
@@ -548,7 +569,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (basePrice > 0)
             {
                 Print($"DIAGNOSTIC: Using Base Price={basePrice} and Range={range} for calculations.");
-                CalculateAllLevels(range, basePrice, currentPriceLevels);
+                CalculateAllLevels(range, basePrice, currentDayLevels.Levels);
                 needsLayoutUpdate = true;
             }
         }
@@ -664,6 +685,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
+        private void UpdateAllTextLayouts()
+        {
+            if (currentDayLevels != null)
+                UpdateTextLayouts(currentDayLevels.Levels);
+            foreach (var day in historicalLevels)
+                UpdateTextLayouts(day.Levels);
+        }
+
         private void UpdateTextLayouts(Dictionary<string, PriceLevel> levels)
         {
             // Verificación temprana para evitar procesamiento innecesario
@@ -710,23 +739,31 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			if (needsLayoutUpdate)
 			{
-				UpdateTextLayouts(currentPriceLevels);
-				UpdateTextLayouts(previousPriceLevels);
+				UpdateAllTextLayouts();
 				needsLayoutUpdate = false;
 			}
 
 			if (UseAutomaticDate)
 			{
-				// Draw previous day's lines (not extended)
-				DrawLevelsForRange(chartControl, chartScale, previousPriceLevels, previousDayStartBar, previousDayEndBar, false);
+                // Draw historical days
+                foreach (var day in historicalLevels)
+                {
+                    DrawLevelsForRange(chartControl, chartScale, day.Levels, day.StartBarIndex, day.EndBarIndex, false);
+                }
 
-				// Draw current day's lines (extended)
-				DrawLevelsForRange(chartControl, chartScale, currentPriceLevels, firstBarOfCurrentDay, ChartBars.ToIndex, true);
+                // Draw current day
+                if (currentDayLevels != null)
+                {
+                    DrawLevelsForRange(chartControl, chartScale, currentDayLevels.Levels, currentDayLevels.StartBarIndex, ChartBars.ToIndex, true);
+                }
 			}
 			else // Manual Mode
 			{
 				// In manual mode, we only draw one set of lines for the selected day
-				DrawLevelsForRange(chartControl, chartScale, currentPriceLevels, manualStartBar, manualEndBar, false);
+                if (currentDayLevels != null)
+                {
+				    DrawLevelsForRange(chartControl, chartScale, currentDayLevels.Levels, manualStartBar, manualEndBar, false);
+                }
 			}
 		}
 
@@ -760,8 +797,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 				float y = (float)chartScale.GetYByValue(level.Value);
 				
-				// --- START of new logic ---
-
 				// 1. Calculate Y position (above the line)
 				float labelY = y - level.LabelLayout.Metrics.Height - 2; // 2px buffer
 
@@ -784,8 +819,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 						break;
 				}
 
-				// --- END of new logic ---
-
 				RenderTarget.DrawLine(
 					new SharpDX.Vector2(lineStartX, y),
 					new SharpDX.Vector2(lineEndX, y),
@@ -793,7 +826,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 					Width
 				);
 				
-				Point textPoint = new Point(labelX, labelY); // Use new coordinates
+				Point textPoint = new Point(labelX, labelY);
 				RenderTarget.DrawTextLayout(textPoint.ToVector2(), level.LabelLayout, labelBrush);
 			}
 		}
@@ -806,7 +839,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         public bool UseAutomaticDate { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "NR2 Level Type", Description = "Select whether NR2 should use the previous day's close or current day's open.", Order = 2, GroupName = "Parameters")]
+        [Range(0, int.MaxValue)]
+        [Display(Name = "Historical Days to Draw", Description = "How many previous days of levels to draw.", Order = 2, GroupName = "Parameters")]
+        public int DaysToDraw { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "NR2 Level Type", Description = "Select whether NR2 should use the previous day's close or current day's open.", Order = 3, GroupName = "Parameters")]
         public NR2LevelType Nr2LevelType 
         { 
             get { return nr2LevelType; } 
@@ -814,11 +852,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
 
         [NinjaScriptProperty]
-        [Display(Name = "GAP", Description = "If true, adds half of the opening gap-up to the previous day's range.", Order = 3, GroupName = "Parameters")]
+        [Display(Name = "GAP", Description = "If true, adds half of the opening gap-up to the previous day's range.", Order = 4, GroupName = "Parameters")]
         public bool UseGapCalculation { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Selected Date", Description = "Date for calculating levels (only used if 'Use Automatic Date' is false).", Order = 3, GroupName = "Parameters")]
+        [Display(Name = "Selected Date", Description = "Date for calculating levels (only used if 'Use Automatic Date' is false).", Order = 5, GroupName = "Parameters")]
         public DateTime SelectedDate
         {
             get { return selectedDate; }
@@ -826,7 +864,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
 
         [NinjaScriptProperty]
-        [Display(Name = "Manual Price", Description = "Base price for levels. If 0, uses prior day's close.", Order = 4, GroupName = "Parameters")]
+        [Display(Name = "Manual Price", Description = "Base price for levels. If 0, uses prior day's close.", Order = 6, GroupName = "Parameters")]
         public double ManualPrice
         {
             get { return manualPrice; }
@@ -835,16 +873,16 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         [NinjaScriptProperty]
         [Range(1, int.MaxValue)]
-        [Display(Name = "Line Width", Description = "Width of the level lines", Order = 4, GroupName = "Visuals")]
+        [Display(Name = "Line Width", Description = "Width of the level lines", Order = 1, GroupName = "Visuals")]
         public int Width { get; set; }
         
         [NinjaScriptProperty]
         [Range(0, int.MaxValue)]
-        [Display(Name = "Line Buffer (Pixels)", Description = "Pixel buffer from the last bar for line drawing.", Order = 5, GroupName = "Visuals")]
+        [Display(Name = "Line Buffer (Pixels)", Description = "Pixel buffer from the last bar for line drawing.", Order = 2, GroupName = "Visuals")]
         public int LineBufferPixels { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Label Alignment", Description = "Horizontal alignment of the price labels.", Order = 6, GroupName = "Visuals")]
+        [Display(Name = "Label Alignment", Description = "Horizontal alignment of the price labels.", Order = 3, GroupName = "Visuals")]
         public LabelAlignment LabelAlignment { get; set; }
 
 
@@ -880,18 +918,18 @@ namespace NinjaTrader.NinjaScript.Indicators
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
 		private AvalPV4[] cacheAvalPV4;
-		public AvalPV4 AvalPV4(bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public AvalPV4 AvalPV4(bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels, LabelAlignment labelAlignment)
 		{
-			return AvalPV4(Input, useAutomaticDate, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
+			return AvalPV4(Input, useAutomaticDate, daysToDraw, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels, labelAlignment);
 		}
 
-		public AvalPV4 AvalPV4(ISeries<double> input, bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public AvalPV4 AvalPV4(ISeries<double> input, bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels, LabelAlignment labelAlignment)
 		{
 			if (cacheAvalPV4 != null)
 				for (int idx = 0; idx < cacheAvalPV4.Length; idx++)
-					if (cacheAvalPV4[idx] != null && cacheAvalPV4[idx].UseAutomaticDate == useAutomaticDate && cacheAvalPV4[idx].Nr2LevelType == nr2LevelType && cacheAvalPV4[idx].UseGapCalculation == useGapCalculation && cacheAvalPV4[idx].SelectedDate == selectedDate && cacheAvalPV4[idx].ManualPrice == manualPrice && cacheAvalPV4[idx].Width == width && cacheAvalPV4[idx].LineBufferPixels == lineBufferPixels && cacheAvalPV4[idx].EqualsInput(input))
+					if (cacheAvalPV4[idx] != null && cacheAvalPV4[idx].UseAutomaticDate == useAutomaticDate && cacheAvalPV4[idx].DaysToDraw == daysToDraw && cacheAvalPV4[idx].Nr2LevelType == nr2LevelType && cacheAvalPV4[idx].UseGapCalculation == useGapCalculation && cacheAvalPV4[idx].SelectedDate == selectedDate && cacheAvalPV4[idx].ManualPrice == manualPrice && cacheAvalPV4[idx].Width == width && cacheAvalPV4[idx].LineBufferPixels == lineBufferPixels && cacheAvalPV4[idx].LabelAlignment == labelAlignment && cacheAvalPV4[idx].EqualsInput(input))
 						return cacheAvalPV4[idx];
-			return CacheIndicator<AvalPV4>(new AvalPV4(){ UseAutomaticDate = useAutomaticDate, Nr2LevelType = nr2LevelType, UseGapCalculation = useGapCalculation, SelectedDate = selectedDate, ManualPrice = manualPrice, Width = width, LineBufferPixels = lineBufferPixels }, input, ref cacheAvalPV4);
+			return CacheIndicator<AvalPV4>(new AvalPV4(){ UseAutomaticDate = useAutomaticDate, DaysToDraw = daysToDraw, Nr2LevelType = nr2LevelType, UseGapCalculation = useGapCalculation, SelectedDate = selectedDate, ManualPrice = manualPrice, Width = width, LineBufferPixels = lineBufferPixels, LabelAlignment = labelAlignment }, input, ref cacheAvalPV4);
 		}
 	}
 }
@@ -900,14 +938,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.AvalPV4 AvalPV4(bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public Indicators.AvalPV4 AvalPV4(bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels, LabelAlignment labelAlignment)
 		{
-			return indicator.AvalPV4(Input, useAutomaticDate, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
+			return indicator.AvalPV4(Input, useAutomaticDate, daysToDraw, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels, labelAlignment);
 		}
 
-		public Indicators.AvalPV4 AvalPV4(ISeries<double> input , bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public Indicators.AvalPV4 AvalPV4(ISeries<double> input , bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels, LabelAlignment labelAlignment)
 		{
-			return indicator.AvalPV4(input, useAutomaticDate, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
+			return indicator.AvalPV4(input, useAutomaticDate, daysToDraw, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels, labelAlignment);
 		}
 	}
 }
@@ -916,14 +954,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.AvalPV4 AvalPV4(bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public Indicators.AvalPV4 AvalPV4(bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels, LabelAlignment labelAlignment)
 		{
-			return indicator.AvalPV4(Input, useAutomaticDate, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
+			return indicator.AvalPV4(Input, useAutomaticDate, daysToDraw, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels, labelAlignment);
 		}
 
-		public Indicators.AvalPV4 AvalPV4(ISeries<double> input , bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public Indicators.AvalPV4 AvalPV4(ISeries<double> input , bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels, LabelAlignment labelAlignment)
 		{
-			return indicator.AvalPV4(input, useAutomaticDate, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
+			return indicator.AvalPV4(input, useAutomaticDate, daysToDraw, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels, labelAlignment);
 		}
 	}
 }
