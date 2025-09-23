@@ -427,8 +427,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                         Print($"DIAGNOSTIC: Gap calculation = |{currentDailyOpen} (Open) - {priorDayClose} (Close)| = {gap}");
 
                         double originalRange = previousDayRange;
-                        previousDayRange += (gap / 2);
-                        Print($"DIAGNOSTIC: Modified range = {originalRange} (Initial Range) + {gap / 2} (Half Gap) = {previousDayRange}");
+                        previousDayRange += (gap);
+                        Print($"DIAGNOSTIC: Modified range = {originalRange} (Initial Range) + {gap} (Half Gap) = {previousDayRange}");
                     }
                     else if (priorDayClose > 0)
                     {
@@ -500,7 +500,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     double gap = Math.Abs(selectedDayOpen - priorDayClose);
                     Print($"DIAGNOSTIC: Gap calculation = |{selectedDayOpen} (Open) - {priorDayClose} (Close)| = {gap}");
-                    range += (gap / 2);
+                    range += (gap);
                     Print($"DIAGNOSTIC: Modified range (adding half gap) = {range}");
                 }
             }

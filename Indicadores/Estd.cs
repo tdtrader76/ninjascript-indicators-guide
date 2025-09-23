@@ -118,7 +118,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 				Labels.Add("Close;");
 				Labels.Add("Volume;");
 				
-				path 	= NinjaTrader.Core.Globals.UserDataDir+Instrument.MasterInstrument.Name+" "+DateTime.Now.DayOfWeek+" "+DateTime.Now.Hour+DateTime.Now.Minute+ ".txt"; // Define the Path to our test file
+								// Sanitize the instrument name to be used in the file path
+				string sanitizedInstrumentName = string.Join("_", Instrument.MasterInstrument.Name.Split(Path.GetInvalidFileNameChars()));
+				
+				// Create a full path in the NT8 outgoing directory with a clean, sortable file name
+				string fileName = string.Format("{0}_{1}.txt", sanitizedInstrumentName, DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
+				path = Path.Combine(NinjaTrader.Core.Globals.UserDataDir, "outgoing", fileName);
+
 				
 				sw = File.AppendText(path);  // Open the path for writing
 				
