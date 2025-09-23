@@ -26,35 +26,26 @@ using System.Xml.Serialization;
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
+	public enum TCVMultiplierType
+	{
+		[Description("0.125")]
+		Default,
+		[Description("0.0855")]
+		Std1
+	}
 
     public class AvalPV21 : Indicator
     {
         #region Variables
-        // Input Parameters
         private DateTime selectedDate;
         private double manualPrice;
-        private bool useCurrentDayOpen; // Reemplaza a la enumeración
+        private NR2LevelType nr2LevelType;
 
-        // Session management variables for automatic daily updates
-        private SessionIterator sessionIterator;
-        private DateTime currentDate = Core.Globals.MinDate;
-        private double currentDayHigh;
-        private double currentDayLow;
-        private double currentDayOpen;
-        private double priorDayHigh;
-        private double priorDayLow;
-        private double priorDayOpen;
+        private int lastDayProcessed = -1;
+		private int manualStartBar = -1;
 
-        // Variables para el control de dibujo por día
-        private DateTime drawingDay = Core.Globals.MinDate;
-        private int firstBarOfDay = -1;
-        private int lastBarOfDay = -1;
-
-
-        // A dictionary to hold all price levels for easier management
         private readonly Dictionary<string, PriceLevel> priceLevels = new Dictionary<string, PriceLevel>();
 
-        // Represents a calculated price level
         private class PriceLevel : IDisposable
         {
             public string Name { get; }
@@ -71,13 +62,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             public void Dispose()
             {
-                // Liberar recursos de manera segura
                 LabelLayout?.Dispose();
                 LabelLayout = null;
             }
         }
 
-        // Caching and performance optimization
         private readonly Dictionary<System.Windows.Media.Brush, SharpDX.Direct2D1.Brush> dxBrushes = new Dictionary<System.Windows.Media.Brush, SharpDX.Direct2D1.Brush>();
         private bool needsLayoutUpdate = false;
         #endregion
@@ -87,9 +76,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             switch (State)
             {
                 case State.SetDefaults:
-                    Description = @"Calculates and displays price levels based on the previous day's range and a manual price.";
+                    Description = @"Calculates and displays price levels based on the previous day's range with custom multipliers.";
                     Name = "AvalPV21";
-                    Calculate = Calculate.OnBarClose;
+                    Calculate = Calculate.OnEachTick;
                     IsOverlay = true;
                     DisplayInDataBox = true;
                     DrawOnPricePanel = true;
@@ -99,60 +88,26 @@ namespace NinjaTrader.NinjaScript.Indicators
                     ScaleJustification = NinjaTrader.Gui.Chart.ScaleJustification.Right;
                     IsSuspendedWhileInactive = true;
 
-                    // Default Parameters
                     UseAutomaticDate = true;
-                    useCurrentDayOpen = false; // false = PreviousDayClose, true = CurrentDayOpen
+                    Nr2LevelType = NR2LevelType.PreviousDayClose;
+                    TCVMultiplier = TCVMultiplierType.Default;
                     UseGapCalculation = false;
                     SelectedDate = DateTime.Today;
                     ManualPrice = 0.0;
-                    Width = 1; // Default line width
-                    LineBufferPixels = 125; // Default buffer for the line drawing
+                    Width = 1;
+                    LineBufferPixels = 125;
                     break;
 
                 case State.Configure:
-                    // Add the daily data series for prior day's close
                     AddDataSeries(Bars.Instrument.FullName, BarsPeriodType.Day, 1);
-
-                    // Initialize the price levels
                     InitializePriceLevels();
-
-                    // Reset session variables
-                    currentDate = Core.Globals.MinDate;
-                    currentDayHigh = 0;
-                    currentDayLow = 0;
-                    currentDayOpen = 0;
-                    priorDayHigh = 0;
-                    priorDayLow = 0;
-                    priorDayOpen = 0;
-                    sessionIterator = null;
-                    
-                    // Reset drawing day variables
-                    drawingDay = Core.Globals.MinDate;
-                    firstBarOfDay = -1;
-                    lastBarOfDay = -1;
-                    
-                    // Reset render flags
-                    needsLayoutUpdate = false;
                     break;
 
                 case State.DataLoaded:
-                    // Data loaded, now we can calculate levels or initialize session iterator
                     ClearOutputWindow();
-                    if (UseAutomaticDate)
-                    {
-                        try
-                        {
-                            sessionIterator = new SessionIterator(Bars);
-                        }
-                        catch (Exception ex)
-                        {
-                            Print($"Error initializing SessionIterator: {ex.Message}");
-                        }
-                    }
                     break;
 
                 case State.Terminated:
-                    // Dispose of DX resources
                     foreach (var brush in dxBrushes.Values)
                         brush?.Dispose();
                     dxBrushes.Clear();
@@ -162,7 +117,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                     break;
 
                 case State.Historical:
-                    // Configuration for historical data
                     SetZOrder(-1);
                     
                     if (!Bars.BarsType.IsIntraday)
@@ -171,181 +125,69 @@ namespace NinjaTrader.NinjaScript.Indicators
                         return;
                     }
                     
-                    // Calculate the levels once if UseAutomaticDate is false
                     if (!UseAutomaticDate)
-                        CalculateLevelsForDate();
-                    break;
-
-                case State.Realtime:
-                    // Enable chart interaction in real-time
-                    ChartControl?.Dispatcher?.BeginInvoke(new Action(() =>
-                    {
-                        // Future interaction logic can be placed here
-                    }));
+					{
+                        CalculateLevelsForDate(SelectedDate);
+						for (int i = 0; i < Bars.Count; i++)
+						{
+							if (Bars.GetTime(i).Date == SelectedDate.Date)
+							{
+								manualStartBar = i;
+								break;
+							}
+						}
+					}
                     break;
             }
         }
 
         protected override void OnBarUpdate()
         {
-            // Verificación rápida de salida
-            if (!UseAutomaticDate)
+            if (!UseAutomaticDate || BarsArray[1] == null || BarsArray[1].Count < 2 || CurrentBars[1] < 1)
                 return;
 
             try
             {
-                // Verificaciones tempranas para evitar procesamiento innecesario
-                if (CurrentBar < 1 || sessionIterator == null) return;
-                
-                DateTime tradingDay = sessionIterator.GetTradingDay(Time[0]);
-                if (tradingDay == DateTime.MinValue) return;
-
-                // Verificar si es un nuevo día o si necesitamos inicializar
-                bool isNewDay = currentDate != tradingDay || currentDayOpen == 0;
-                
-                if (isNewDay)
+                int currentDayNumber = Bars.GetTime(0).DayOfYear;
+                if (lastDayProcessed != currentDayNumber)
                 {
-                    Print($"DIAGNOSTIC: New day detected: {tradingDay:d}");
-                    
-                    // Calcular el rango del día anterior usando la serie diaria
-                    double previousDayRange = 0;
-                    double priorDayClose = 0;
-                    double priorDayHigh = 0;
-                    double priorDayLow = 0;
-                    
-                    // Asegurarse de que la serie diaria está disponible
-                    if (BarsArray[1] != null && BarsArray[1].Count > 1)
+                    lastDayProcessed = currentDayNumber;
+
+                    double priorDayHigh = Highs[1][1];
+                    double priorDayLow = Lows[1][1];
+                    double priorDayClose = Closes[1][1];
+
+                    if (priorDayHigh > 0 && priorDayLow > 0 && priorDayHigh >= priorDayLow)
                     {
-                        // Buscar el índice correcto del día anterior
-                        int priorDayIndex = -1;
-                        for (int i = BarsArray[1].Count - 1; i >= 0; i--)
+						Print($"--- NUEVO DÍA DETECTADO: {Bars.GetTime(0):d} ---");
+						Print($"Máximo del día anterior para el rango: {priorDayHigh:F5}");
+						Print($"Mínimo del día anterior para el rango: {priorDayLow:F5}");
+                        double previousDayRange = priorDayHigh - priorDayLow;
+
+                        if (UseGapCalculation)
                         {
-                            DateTime dailyBarTime = BarsArray[1].GetTime(i);
-                            DateTime dailyTradingDay = dailyBarTime.Date;
-                            
-                            if (dailyTradingDay < tradingDay)
-                            {
-                                priorDayIndex = i;
-                                Print($"DIAGNOSTIC: Found previous day at index {priorDayIndex} with date {dailyTradingDay:d}");
-                                break;
-                            }
+                            double currentDayOpen = Opens[1][0];
+                            previousDayRange = ApplyGapCalculation(previousDayRange, priorDayClose, currentDayOpen);
                         }
                         
-                        if (priorDayIndex >= 0)
+                        double basePrice = ManualPrice;
+                        if (basePrice.ApproxCompare(0) == 0)
                         {
-                            // Obtener los datos del día anterior de la serie diaria
-                            priorDayHigh = BarsArray[1].GetHigh(priorDayIndex);
-                            priorDayLow = BarsArray[1].GetLow(priorDayIndex);
-                            priorDayClose = BarsArray[1].GetClose(priorDayIndex);
-                            
-                            previousDayRange = priorDayHigh - priorDayLow;
-                            
-                            Print($"DIAGNOSTIC: Previous day data - Date: {BarsArray[1].GetTime(priorDayIndex):d}, High: {priorDayHigh}, Low: {priorDayLow}, Close: {priorDayClose}, Range: {previousDayRange}");
+                            basePrice = (Nr2LevelType == NR2LevelType.CurrentDayOpen) ? Opens[1][0] : priorDayClose;
                         }
-                        else
-                        {
-                            Print($"DIAGNOSTIC: Could not find previous day data");
-                        }
-                    }
-                    else
-                    {
-                        Print("DIAGNOSTIC: Daily series not ready or not enough data");
-                    }
 
-                    // Variables para el cálculo
-                    double gap = 0;
-                    double halfGap = 0;
-                    double finalRange = previousDayRange;
-                    
-                    // Aplicar cálculo de GAP si está habilitado y tenemos datos válidos
-                    if (UseGapCalculation && previousDayRange > 0 && priorDayClose > 0)
-                    {
-                        // Ensure the daily data series is loaded and available
-                        if (BarsArray[1] != null && BarsArray[1].Count > 0)
+                        if (basePrice > 0)
                         {
-                            int dailyIndex = BarsArray[1].GetBar(Time[0]);
-                            Print($"DIAGNOSTIC: Current day index = {dailyIndex}");
-                            
-                            if (dailyIndex >= 0)
-                            {
-                                // Get the "official" open from the current daily bar
-                                double currentDailyOpen = BarsArray[1].GetOpen(dailyIndex);
-                                Print($"GAP Calc: Using daily open of {currentDailyOpen} from daily candle at {BarsArray[1].GetTime(dailyIndex)} for calculation at {Time[0]}");
-                                
-                                // Mostrar valores antes del cálculo del gap
-                                Print($"DIAGNOSTIC: Previous close = {priorDayClose}, Current open = {currentDailyOpen}");
-                                
-                                // Calcular el gap como valor absoluto para que siempre sea positivo
-                                gap = Math.Abs(currentDailyOpen - priorDayClose);
-                                halfGap = gap / 2.0;
-                                Print($"DIAGNOSTIC: Gap calculation = |{currentDailyOpen} (Open) - {priorDayClose} (Close)| = {gap}");
-                                Print($"DIAGNOSTIC: Half gap = {gap} / 2 = {halfGap}");
-                                
-                                // Sumar la mitad del gap al rango del día anterior
-                                finalRange = previousDayRange + halfGap;
-                                Print($"DIAGNOSTIC: Final range with gap = {previousDayRange} (Previous Day Range) + {halfGap} (Half Gap) = {finalRange}");
-                            }
-                            else
-                            {
-                                Print($"DIAGNOSTIC: Could not get current day index");
-                            }
+                            CalculateAllLevels(previousDayRange, basePrice);
+                            needsLayoutUpdate = true;
+							ForceRefresh();
                         }
-                        else
-                        {
-                            Print("DIAGNOSTIC: Daily series not ready for gap calculation");
-                        }
-                    }
-                    
-                    // Dividir el rango final entre 2 para calcular los niveles
-                    double halfRange = finalRange / 2.0;
-                    Print($"DIAGNOSTIC: Half range for level calculations = {finalRange} / 2 = {halfRange}");
-                    
-                    // Obtener precio base para cálculo de niveles
-                    double basePrice = ManualPrice;
-                    if (basePrice.ApproxCompare(0) == 0)
-                    {
-                        basePrice = GetBasePriceForNR2(Time[0], priorDayClose);
-                    }
-
-                    // Calcular todos los niveles si tenemos un precio base válido y halfRange válido
-                    if (basePrice > 0 && halfRange > 0)
-                    {
-                        Print($"DIAGNOSTIC: Using CurrentDayOpen = {useCurrentDayOpen} for NR2 level calculation");
-                        Print($"DIAGNOSTIC: Final calculation parameters - Previous Day Range: {previousDayRange}, Gap: {gap}, Half Gap: {halfGap}, Final Range: {finalRange}, Half Range: {halfRange}, Base Price: {basePrice}");
-                        CalculateAllLevels(halfRange, basePrice);
-                        needsLayoutUpdate = true;
-                        
-                        // Calcular los límites del día para dibujo
-                        CalculateDayBoundaries(tradingDay);
-                    }
-                    else
-                    {
-                        Print($"DIAGNOSTIC: Cannot calculate levels - BasePrice: {basePrice}, Half Range: {halfRange}");
-                    }
-
-                    // Inicializar valores para el nuevo día (para el seguimiento intradía)
-                    if (Open.IsValidDataPoint(0) && High.IsValidDataPoint(0) && Low.IsValidDataPoint(0))
-                    {
-                        currentDayOpen = Open[0];
-                        currentDayHigh = High[0];
-                        currentDayLow = Low[0];
-                    }
-                    currentDate = tradingDay;
-                }
-                else
-                {
-                    // Actualizar valores del día actual (para el seguimiento intradía)
-                    if (High.IsValidDataPoint(0) && Low.IsValidDataPoint(0))
-                    {
-                        currentDayHigh = Math.Max(currentDayHigh, High[0]);
-                        currentDayLow = Math.Min(currentDayLow, Low[0]);
                     }
                 }
             }
             catch (Exception ex)
             {
                 Print($"Error in OnBarUpdate: {ex.Message}");
-                Print($"Error stack trace: {ex.StackTrace}");
             }
         }
 
@@ -353,8 +195,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void InitializePriceLevels()
         {
-            // Usar inicialización en bloque para mejorar la eficiencia
-            var levelDefinitions = new[]
+            var levelDefinitions = new[] 
             {
                 new { Name = "Q1", Brush = Brushes.Yellow },
                 new { Name = "Q4", Brush = Brushes.Yellow },
@@ -367,17 +208,16 @@ namespace NinjaTrader.NinjaScript.Indicators
                 new { Name = "NR2", Brush = Brushes.Gold },
                 new { Name = "NR3", Brush = Brushes.BlueViolet },
                 new { Name = "TV", Brush = Brushes.IndianRed },
-                new { Name = "Std1+", Brush = Brushes.ForestGreen },
-                new { Name = "Std2+", Brush = Brushes.ForestGreen },
-                new { Name = "Std3+", Brush = Brushes.ForestGreen },
+                new { Name = "Std1+ (0.0855)", Brush = Brushes.ForestGreen },
+                new { Name = "Std2+ (0.171)", Brush = Brushes.ForestGreen },
+                new { Name = "Std3+ (0.342)", Brush = Brushes.ForestGreen },
                 new { Name = "1D+", Brush = Brushes.Gold },
-                new { Name = "Std1-", Brush = Brushes.IndianRed },
-                new { Name = "Std2-", Brush = Brushes.IndianRed },
-                new { Name = "Std3-", Brush = Brushes.IndianRed },
+                new { Name = "Std1- (0.0855)", Brush = Brushes.IndianRed },
+                new { Name = "Std2- (0.171)", Brush = Brushes.IndianRed },
+                new { Name = "Std3- (0.342)", Brush = Brushes.IndianRed },
                 new { Name = "1D-", Brush = Brushes.Gold }
             };
 
-            // Limpiar y reconstruir el diccionario
             priceLevels.Clear();
             foreach (var def in levelDefinitions)
             {
@@ -387,374 +227,156 @@ namespace NinjaTrader.NinjaScript.Indicators
         
         private double RoundToQuarter(double value)
         {
-            // Más eficiente: usar Math.Round con un factor de 4
             return Math.Round(value * 4) / 4;
         }
-        
-        private void ValidateCalculatedValues()
+
+        private double ApplyGapCalculation(double previousDayRange, double priorDayClose, double currentDayOpen)
         {
-            // This method is no longer needed as the variables it validated have been removed.
-        }
-
-        private double GetPriorDayClose(DateTime time, bool printLog = false)
-        {
-            // Ensure the daily series has data
-            if (BarsArray[1] == null || BarsArray[1].Count < 2)
+            if (priorDayClose > 0 && currentDayOpen.ApproxCompare(priorDayClose) != 0)
             {
-                Print("DIAGNOSTIC: Daily series not ready or not enough data to find prior day's close.");
-                return 0;
-            }
-
-            // Get the index of the daily bar corresponding to the given time
-            int dailyIndex = BarsArray[1].GetBar(time);
-
-            // If the index is valid and not the very first bar, we can get the previous bar's close
-            if (dailyIndex > 0)
-            {
-                int priorDayIndex = dailyIndex - 1;
-                double priorDayClose = BarsArray[1].GetClose(priorDayIndex);
-
-                if (printLog)
-                {
-                    DateTime priorDayTime = BarsArray[1].GetTime(priorDayIndex);
-                    Print($"DIAGNOSTIC: Using prior day close of {priorDayClose} from daily candle at {priorDayTime} (triggered by bar at {time})");
-                }
-
-                return priorDayClose;
+                double gap = Math.Abs(currentDayOpen - priorDayClose);
+                Print($"Cálculo de Gap: |Open ({currentDayOpen}) - Close Anterior ({priorDayClose})| = {gap:F5}");
+                double modifiedRange = previousDayRange + gap;
+                Print($"Rango con Gap: {previousDayRange:F5} (Rango Inicial) + {gap:F5} (Gap) = {modifiedRange:F5}");
+                return modifiedRange;
             }
             
-            // Handle edge cases where the given time is before the second bar of the series
-            Print($"DIAGNOSTIC: Could not find a prior day's close for the date {time:d}. The provided time might be too early in the data series.");
-            return 0;
-        }
-
-        private double GetBasePriceForNR2(DateTime time, double priorDayClose)
-        {
-            if (useCurrentDayOpen) // Reemplaza a la enumeración
-            {
-                // Ensure the daily data series is loaded and available
-                if (BarsArray[1] != null && BarsArray[1].Count > 0)
-                {
-                    // Get the index of the daily bar that corresponds to the current intraday bar
-                    int dailyIndex = BarsArray[1].GetBar(time);
-
-                    if (dailyIndex >= 0)
-                    {
-                        // Get the "official" open from the current daily bar
-                        double currentDayOpen = BarsArray[1].GetOpen(dailyIndex);
-                        Print($"DIAGNOSTIC: Using current day open of {currentDayOpen} for NR2 level");
-                        return currentDayOpen;
-                    }
-                    else
-                    {
-                        Print("DIAGNOSTIC: Could not get current day open, using prior day close for NR2 level");
-                    }
-                }
-                else
-                {
-                    Print("DIAGNOSTIC: Daily series not ready, using prior day close for NR2 level");
-                }
-            }
-            
-            return priorDayClose;
-        }
-
-        private double ApplyGapCalculation(double previousDayRange, double priorDayClose, DateTime time)
-        {
-            Print($"DIAGNOSTIC: Initial previous day range = {previousDayRange}");
-            
-            // Ensure the daily data series is loaded and available
-            if (BarsArray[1] != null && BarsArray[1].Count > 0)
-            {
-                // Get the index of the daily bar that corresponds to the current intraday bar
-                int dailyIndex = BarsArray[1].GetBar(time);
-
-                if (dailyIndex >= 0)
-                {
-                    // Get the "official" open from the current daily bar
-                    double currentDailyOpen = BarsArray[1].GetOpen(dailyIndex);
-                    Print($"GAP Calc: Using daily open of {currentDailyOpen} from daily candle at {BarsArray[1].GetTime(dailyIndex)} for calculation at {time}");
-                    
-                    if (priorDayClose > 0 && currentDailyOpen > priorDayClose)
-                    {
-                        double gap = currentDailyOpen - priorDayClose;
-                        Print($"DIAGNOSTIC: Gap calculation = {currentDailyOpen} (Open) - {priorDayClose} (Close) = {gap}");
-                        
-                        double originalRange = previousDayRange;
-                        previousDayRange += (gap / 2.0); // Agregar la mitad del gap
-                        Print($"DIAGNOSTIC: Modified range = {originalRange} (Initial Range) + {gap / 2.0} (Half Gap) = {previousDayRange}");
-                    }
-                }
-            }
-            
+            Print("No se detectó Gap o no fue posible calcularlo.");
             return previousDayRange;
         }
 
-        private void CalculateDayBoundaries(DateTime targetDate)
+        private void CalculateLevelsForDate(DateTime date)
         {
-            // Si ya hemos calculado los límites para este día, no recalcular
-            if (drawingDay == targetDate && firstBarOfDay >= 0 && lastBarOfDay >= 0)
+            if (BarsArray[1] == null || BarsArray[1].Count < 2) return;
+
+            int dailyIndex = BarsArray[1].GetBar(date);
+            if (dailyIndex < 1)
             {
-                //Print($"DIAGNOSTIC: Using cached day boundaries for {targetDate:d}");
+                Print($"No se encontraron datos diarios para la fecha {date:d} o es la primera barra.");
                 return;
             }
 
-            // Actualizar el día de dibujo
-            drawingDay = targetDate;
-            firstBarOfDay = -1;
-            lastBarOfDay = -1;
+            double priorDayHigh = BarsArray[1].GetHigh(dailyIndex - 1);
+            double priorDayLow = BarsArray[1].GetLow(dailyIndex - 1);
+            double priorDayClose = BarsArray[1].GetClose(dailyIndex - 1);
 
-            Print($"DIAGNOSTIC: Calculating day boundaries for {targetDate:d}");
-
-            // Verificar que tenemos datos
-            if (Bars == null || Bars.Count == 0)
+            if (priorDayHigh > 0 && priorDayLow > 0 && priorDayHigh >= priorDayLow)
             {
-                Print("DIAGNOSTIC: No bars data available");
-                return;
-            }
+				Print($"--- CÁLCULO MANUAL PARA FECHA: {date:d} ---");
+				Print($"Máximo del día anterior ({BarsArray[1].GetTime(dailyIndex-1):d}) para el rango: {priorDayHigh:F5}");
+				Print($"Mínimo del día anterior ({BarsArray[1].GetTime(dailyIndex-1):d}) para el rango: {priorDayLow:F5}");
+                double range = priorDayHigh - priorDayLow;
 
-            // Crear un iterador de sesión si no tenemos uno
-            SessionIterator sessionIter = sessionIterator ?? new SessionIterator(Bars);
-
-            // Buscar el primer y último bar del día objetivo
-            for (int i = 0; i < Bars.Count; i++)
-            {
-                DateTime barTradingDay = sessionIter.GetTradingDay(Bars.GetTime(i));
-                
-                // Verificar si este bar pertenece al día objetivo
-                if (barTradingDay.Date == targetDate.Date)
+                if (UseGapCalculation)
                 {
-                    // Si es el primer bar que encontramos, registrar su índice
-                    if (firstBarOfDay == -1)
-                    {
-                        firstBarOfDay = i;
-                        Print($"DIAGNOSTIC: First bar of day found at index {i}");
-                    }
-                    
-                    // Actualizar el último bar encontrado
-                    lastBarOfDay = i;
+                    double currentDayOpen = BarsArray[1].GetOpen(dailyIndex);
+                    range = ApplyGapCalculation(range, priorDayClose, currentDayOpen);
                 }
-            }
 
-            // Si no encontramos bares para el día objetivo
-            if (firstBarOfDay == -1)
-            {
-                Print($"DIAGNOSTIC: No bars found for day {targetDate:d}, using full range");
-                firstBarOfDay = 0;
-                lastBarOfDay = Bars.Count - 1;
-            }
-            else
-            {
-                Print($"DIAGNOSTIC: Day boundaries calculated - First: {firstBarOfDay}, Last: {lastBarOfDay}");
+                double basePrice = ManualPrice;
+                if (basePrice.ApproxCompare(0) == 0)
+                {
+                    basePrice = (Nr2LevelType == NR2LevelType.CurrentDayOpen) ? BarsArray[1].GetOpen(dailyIndex) : priorDayClose;
+                }
+
+                if (basePrice > 0)
+                {
+                    CalculateAllLevels(range, basePrice);
+                    needsLayoutUpdate = true;
+                }
             }
         }
 
-        private void CalculateLevelsForDate()
+        private void CalculateAllLevels(double dayRange, double basePrice)
         {
-            // Verificaciones tempranas para evitar procesamiento innecesario
-            if (Bars == null || Bars.Count == 0)
-            {
-                Print("DIAGNOSTIC: Bars not loaded, cannot calculate levels.");
-                return;
-            }
+            if (basePrice <= 0 || dayRange <= 0) return;
 
-            Print($"DIAGNOSTIC: Starting calculation for selected date: {SelectedDate:d}");
+            Print("--- INICIO DE CÁLCULOS DETALLADOS ---");
+            Print($"Rango del día (entrada): {dayRange:F5}");
+            Print($"Precio base (entrada): {basePrice:F5}");
+
+            double halfRange = dayRange / 2.0;
+            Print($"Rango modificado / 2: {dayRange:F5} / 2 = {halfRange:F5}");
+
+            double q1Level = RoundToQuarter(basePrice + halfRange);
+            Print($"Q1 (bruto): {basePrice:F5} + {halfRange:F5} = {basePrice + halfRange:F5} -> Redondeado: {q1Level:F5}");
             
-            // Verificar que la serie diaria está disponible
-            if (BarsArray[1] == null || BarsArray[1].Count < 2)
-            {
-                Print("DIAGNOSTIC: Daily series not ready, cannot calculate levels.");
-                return;
-            }
+            double q4Level = RoundToQuarter(basePrice - halfRange);
+            Print($"Q4 (bruto): {basePrice:F5} - {halfRange:F5} = {basePrice - halfRange:F5} -> Redondeado: {q4Level:F5}");
+            
+            Print("\n--- Multiplicadores Estándar ---");
+            double range0125 = dayRange * 0.125;
+            Print($"Rango * 0.125 = {range0125:F5}");
+            double range0159 = dayRange * 0.159;
+            Print($"Rango * 0.159 = {range0159:F5}");
+            double range025 = dayRange * 0.25;
+            Print($"Rango * 0.25 = {range025:F5}");
+            double range0375 = dayRange * 0.375;
+            Print($"Rango * 0.375 = {range0375:F5}");
+            double range050 = dayRange * 0.50;
+            Print($"Rango * 0.50 = {range050:F5}");
 
-            // Buscar el día anterior al seleccionado en la serie diaria
-            Print($"DIAGNOSTIC: Looking for previous day to {SelectedDate:d}");
-            int priorDayIndex = -1;
-            for (int i = BarsArray[1].Count - 1; i >= 0; i--)
-            {
-                DateTime dailyBarTime = BarsArray[1].GetTime(i);
-                DateTime dailyTradingDay = dailyBarTime.Date;
-                
-                if (dailyTradingDay < SelectedDate.Date)
-                {
-                    priorDayIndex = i;
-                    Print($"DIAGNOSTIC: Found previous day at index {priorDayIndex} with date {dailyTradingDay:d}");
-                    break;
-                }
-            }
+            Print("\n--- Multiplicadores STD Personalizados ---");
+            double std1_mult = 0.0855;
+            double range_std1 = dayRange * std1_mult;
+            Print($"Rango * {std1_mult} = {range_std1:F5}");
 
-            if (priorDayIndex >= 0)
-            {
-                // Obtener datos del día anterior de la serie diaria
-                double priorDayHigh = BarsArray[1].GetHigh(priorDayIndex);
-                double priorDayLow = BarsArray[1].GetLow(priorDayIndex);
-                double priorDayClose = BarsArray[1].GetClose(priorDayIndex);
-                double previousDayRange = priorDayHigh - priorDayLow;
-                
-                Print($"DIAGNOSTIC: Using daily data for previous day - High: {priorDayHigh}, Low: {priorDayLow}, Close: {priorDayClose}, Range: {previousDayRange}");
+			double tctv_mult = (TCVMultiplier == TCVMultiplierType.Default) ? 0.125 : 0.0855;
+			double range_tctv = dayRange * tctv_mult;
+			Print($"Multiplicador TC/TV seleccionado: {tctv_mult}");
+			Print($"Rango * {tctv_mult} (TC/TV) = {range_tctv:F5}");
 
-                // Variables para el cálculo
-                double gap = 0;
-                double halfGap = 0;
-                double finalRange = previousDayRange;
-                
-                // Aplicar cálculo de GAP si está habilitado
-                if (UseGapCalculation && previousDayRange > 0 && priorDayClose > 0)
-                {
-                    // Buscar el índice del día seleccionado
-                    int selectedIndex = BarsArray[1].GetBar(SelectedDate);
-                    if (selectedIndex >= 0)
-                    {
-                        // Get the "official" open from the selected daily bar
-                        double currentDailyOpen = BarsArray[1].GetOpen(selectedIndex);
-                        Print($"GAP Calc: Using daily open of {currentDailyOpen} from daily candle at {BarsArray[1].GetTime(selectedIndex)} for calculation at {SelectedDate}");
-                        
-                        // Calcular el gap como valor absoluto para que siempre sea positivo
-                        gap = Math.Abs(currentDailyOpen - priorDayClose);
-                        halfGap = gap / 2.0;
-                        Print($"DIAGNOSTIC: Gap calculation = |{currentDailyOpen} (Open) - {priorDayClose} (Close)| = {gap}");
-                        Print($"DIAGNOSTIC: Half gap = {gap} / 2 = {halfGap}");
-                        
-                        // Sumar la mitad del gap al rango del día anterior
-                        finalRange = previousDayRange + halfGap;
-                        Print($"DIAGNOSTIC: Final range with gap = {previousDayRange} (Previous Day Range) + {halfGap} (Half Gap) = {finalRange}");
-                    }
-                }
-                
-                // Dividir el rango final entre 2 para calcular los niveles
-                double halfRange = finalRange / 2.0;
-                Print($"DIAGNOSTIC: Half range for level calculations = {finalRange} / 2 = {halfRange}");
-
-                // Verificar que el halfRange sea válido
-                if (halfRange > 0)
-                {
-                    // Obtener precio base para cálculo de niveles
-                    double basePrice = ManualPrice;
-                    if (basePrice.ApproxCompare(0) == 0)
-                    {
-                        basePrice = GetBasePriceForNR2(SelectedDate, priorDayClose);
-                    }
-
-                    // Calcular todos los niveles si tenemos un precio base válido
-                    if (basePrice > 0)
-                    {
-                        Print("DIAGNOSTIC: Range is valid. Calculating all levels.");
-                        Print($"DIAGNOSTIC: Using CurrentDayOpen = {useCurrentDayOpen} for NR2 level calculation");
-                        Print($"DIAGNOSTIC: Final calculation parameters - Previous Day Range: {previousDayRange}, Gap: {gap}, Half Gap: {halfGap}, Final Range: {finalRange}, Half Range: {halfRange}, Base Price: {basePrice}");
-                        CalculateAllLevels(halfRange, basePrice);
-                        needsLayoutUpdate = true;
-                        
-                        // Calcular los límites del día para dibujo
-                        CalculateDayBoundaries(SelectedDate);
-                    }
-                }
-                else
-                {
-                    Print("DIAGNOSTIC: Calculated half range is zero or negative. Levels will not be drawn.");
-                }
-            }
-            else
-            {
-                Print($"DIAGNOSTIC: Could not find data for previous day to {SelectedDate:d}");
-            }
-        }
-
-        private void CalculateAllLevels(double halfRange, double basePrice)
-        {
-            try
-            {
-                if (basePrice <= 0 || halfRange <= 0) return;
-
-                // Mostrar los parámetros de cálculo
-                Print($"--- NIVELES CALCULADOS ---");
-                Print($"Half Range (parámetro): {halfRange:F5}");
-                Print($"Base Price (NR2): {basePrice:F5}");
-                
-                // Calcular niveles usando halfRange
-                double q1Level = RoundToQuarter(basePrice + halfRange);
-                double q4Level = RoundToQuarter(basePrice - halfRange);
-                
-                priceLevels["NR2"].Value = RoundToQuarter(basePrice);
-                priceLevels["Q1"].Value = q1Level;
-                priceLevels["Q4"].Value = q4Level;
-                priceLevels["Q2"].Value = RoundToQuarter(q1Level - (halfRange * 0.5));
-                priceLevels["Q3"].Value = RoundToQuarter(q4Level + (halfRange * 0.5));
-                priceLevels["Q2/3"].Value = RoundToQuarter(q1Level - (halfRange * 0.75));
-                priceLevels["Q3/4"].Value = RoundToQuarter(q4Level + (halfRange * 0.75));
-                priceLevels["TC"].Value = RoundToQuarter(q1Level - (halfRange * 0.25));
-                priceLevels["NR1"].Value = RoundToQuarter(q1Level - (halfRange * 0.318));
-                priceLevels["Std1+"].Value = RoundToQuarter(q1Level + (halfRange * 0.25));
-                priceLevels["Std2+"].Value = RoundToQuarter(q1Level + (halfRange * 0.5));
-                priceLevels["Std3+"].Value = RoundToQuarter(q1Level + (halfRange * 0.75));
-                priceLevels["1D+"].Value = RoundToQuarter(q1Level + halfRange);
-                priceLevels["NR3"].Value = RoundToQuarter(q4Level + (halfRange * 0.318));
-                priceLevels["TV"].Value = RoundToQuarter(q4Level + (halfRange * 0.25));
-                priceLevels["Std1-"].Value = RoundToQuarter(q4Level - (halfRange * 0.25));
-                priceLevels["Std2-"].Value = RoundToQuarter(q4Level - (halfRange * 0.5));
-                priceLevels["Std3-"].Value = RoundToQuarter(q4Level - (halfRange * 0.75));
-                priceLevels["1D-"].Value = RoundToQuarter(q4Level - halfRange);
-                
-                // Mostrar todos los niveles calculados
-                Print($"NR2 (Base Price): {priceLevels["NR2"].Value:F5}");
-                Print($"Q1: {priceLevels["Q1"].Value:F5}");
-                Print($"Q2: {priceLevels["Q2"].Value:F5}");
-                Print($"Q3: {priceLevels["Q3"].Value:F5}");
-                Print($"Q4: {priceLevels["Q4"].Value:F5}");
-                Print($"Q2/3: {priceLevels["Q2/3"].Value:F5}");
-                Print($"Q3/4: {priceLevels["Q3/4"].Value:F5}");
-                Print($"TC: {priceLevels["TC"].Value:F5}");
-                Print($"NR1: {priceLevels["NR1"].Value:F5}");
-                Print($"NR3: {priceLevels["NR3"].Value:F5}");
-                Print($"TV: {priceLevels["TV"].Value:F5}");
-                Print($"Std1+: {priceLevels["Std1+"].Value:F5}");
-                Print($"Std2+: {priceLevels["Std2+"].Value:F5}");
-                Print($"Std3+: {priceLevels["Std3+"].Value:F5}");
-                Print($"1D+: {priceLevels["1D+"].Value:F5}");
-                Print($"Std1-: {priceLevels["Std1-"].Value:F5}");
-                Print($"Std2-: {priceLevels["Std2-"].Value:F5}");
-                Print($"Std3-: {priceLevels["Std3-"].Value:F5}");
-                Print($"1D-: {priceLevels["1D-"].Value:F5}");
-                Print($"------------------------");
-            }
-            catch (Exception ex)
-            {
-                Print($"Error in CalculateAllLevels: {ex.Message}");
-            }
+            Print("\n--- ASIGNACIÓN DE NIVELES ---");
+            priceLevels["Q1"].Value = q1Level;
+            priceLevels["Q4"].Value = q4Level;
+            priceLevels["Q2"].Value = RoundToQuarter(q1Level - range025);
+            priceLevels["Q3"].Value = RoundToQuarter(q4Level + range025);
+            priceLevels["Q2/3"].Value = RoundToQuarter(q1Level - range0375);
+            priceLevels["Q3/4"].Value = RoundToQuarter(q4Level + range0375);
+            priceLevels["NR2"].Value = RoundToQuarter(basePrice);
+            priceLevels["TC"].Value = RoundToQuarter(q1Level - range_tctv);
+            priceLevels["NR1"].Value = RoundToQuarter(q1Level - range0159);
+            priceLevels["Std1+ (0.0855)"].Value = RoundToQuarter(q1Level + range_std1);
+            priceLevels["Std2+ (0.171)"].Value = RoundToQuarter(q1Level + (dayRange * 0.171));
+            priceLevels["Std3+ (0.342)"].Value = RoundToQuarter(q1Level + (dayRange * 0.342));
+            priceLevels["1D+"].Value = RoundToQuarter(q1Level + range050);
+            priceLevels["NR3"].Value = RoundToQuarter(q4Level + range0159);
+            priceLevels["TV"].Value = RoundToQuarter(q4Level + range_tctv);
+            priceLevels["Std1- (0.0855)"].Value = RoundToQuarter(q4Level - range_std1);
+            priceLevels["Std2- (0.171)"].Value = RoundToQuarter(q4Level - (dayRange * 0.171));
+            priceLevels["Std3- (0.342)"].Value = RoundToQuarter(q4Level - (dayRange * 0.342));
+            priceLevels["1D-"].Value = RoundToQuarter(q4Level - range050);
         }
 
         private void UpdateTextLayouts()
         {
-            // Verificación temprana para evitar procesamiento innecesario
-            if (ChartControl == null) 
-            {
-                //Print("DIAGNOSTIC: ChartControl is null, skipping text layout update");
-                return;
-            }
+            if (ChartControl == null) return; 
             
-            //Print("DIAGNOSTIC: Updating text layouts");
-            
-            // Usar 'using' para asegurar la liberación correcta de recursos
             using (TextFormat textFormat = ChartControl.Properties.LabelFont.ToDirectWriteTextFormat())
             {
-                int updatedLayouts = 0;
                 foreach (var level in priceLevels.Values)
                 {
-                    // Liberar el layout anterior si existe
                     level.LabelLayout?.Dispose();
                     
-                    // Saltar niveles sin valor válido
                     if (double.IsNaN(level.Value))
                     {
                         level.LabelLayout = null;
                         continue;
                     }
                     
-                    // Crear nueva etiqueta con el valor redondeado
-                    string labelText = $"{level.Name} {RoundToQuarter(level.Value):F2}";
+					string labelText;
+					if (level.Name == "TC" || level.Name == "TV")
+					{
+						double multiplier = (TCVMultiplier == TCVMultiplierType.Default) ? 0.125 : 0.0855;
+						labelText = $"{level.Name} ({multiplier:F4}) {RoundToQuarter(level.Value):F2}";
+					}
+					else
+					{
+						labelText = $"{level.Name} {RoundToQuarter(level.Value):F2}";
+					}
+
                     level.LabelLayout = new TextLayout(Core.Globals.DirectWriteFactory, labelText, textFormat, ChartPanel?.W ?? 0, textFormat.FontSize);
-                    updatedLayouts++;
                 }
-                //Print($"DIAGNOSTIC: Updated {updatedLayouts} text layouts");
             }
         }
 
@@ -770,65 +392,53 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
         {
-            // Verificación rápida de salida para mejorar el rendimiento
             if (priceLevels.Count == 0 || !priceLevels.TryGetValue("Q1", out PriceLevel q1) || double.IsNaN(q1.Value))
-            {
                 return;
-            }
 
-            // Actualizar layouts solo si es necesario
             if (needsLayoutUpdate)
             {
                 UpdateTextLayouts();
                 needsLayoutUpdate = false;
             }
 
-            // Verificaciones de límites tempranas
             int lastBarIndex = ChartBars?.ToIndex ?? -1;
-            if (lastBarIndex < 0) 
-            {
-                return;
-            }
+            if (lastBarIndex < 0) return;
 
-            // Siempre renderizar los niveles calculados, independientemente del día
-            // Esto debería resolver el problema de las líneas que desaparecen
-            
-            // Calcular las posiciones X para las líneas basadas en el área visible completa
-            int visibleFirstBar = ChartBars.FromIndex;
-            int visibleLastBar = ChartBars.ToIndex;
-            
-            // Asegurarse de que los índices están dentro de los límites válidos
-            visibleFirstBar = Math.Max(visibleFirstBar, 0);
-            visibleLastBar = Math.Min(visibleLastBar, Bars?.Count - 1 ?? visibleLastBar);
+			int startBarIndex = -1;
+			if(UseAutomaticDate)
+			{
+				for (int i = lastBarIndex; i >= 0; i--)
+				{
+					if (Bars.GetTime(i).DayOfYear != Bars.GetTime(lastBarIndex).DayOfYear)
+						break;
+					startBarIndex = i;
+				}
+			}
+			else
+			{
+				startBarIndex = manualStartBar;
+			}
 
-            // Calcular las posiciones X para las líneas
-            float lineStartX = (float)chartControl.GetXByBarIndex(ChartBars, visibleFirstBar);
-            float lineEndX = (float)chartControl.GetXByBarIndex(ChartBars, visibleLastBar);
+			if (startBarIndex < 0) return;
+
+            double startBarX = chartControl.GetXByBarIndex(ChartBars, startBarIndex);
+            float lineStartX = (float)startBarX;
+
+            double lastBarX = chartControl.GetXByBarIndex(ChartBars, lastBarIndex);
+            float lineEndX = (float)(lastBarX + 10);
             
-            // Calcular la posición X para las etiquetas (ligeramente a la izquierda del área visible)
-            float labelX = lineEndX + 10; // Cambiado de lineStartX a lineEndX como solicitaste
-            
-            // Asegurar que las etiquetas no se salgan del área visible
-            float panelWidth = ChartPanel?.W ?? 0;
-            labelX = Math.Min(labelX, panelWidth - 100); // Dejar espacio para el texto
-            
-            // Renderizar niveles con manejo eficiente de recursos
+            if (lineEndX <= lineStartX) return;
+
+            float labelX = lineEndX + 5;
             SharpDX.Direct2D1.Brush labelBrush = GetDxBrush(chartControl.Properties.ChartText);
 
-            // Renderizar niveles con manejo eficiente de recursos
             foreach (var level in priceLevels.Values)
             {
-                // Verificaciones rápidas de salida
                 if (double.IsNaN(level.Value) || level.LabelLayout == null)
                     continue;
 
                 float y = (float)chartScale.GetYByValue(level.Value);
                 
-                // Verificar que la coordenada Y esté dentro de los límites razonables
-                if (y < -10000 || y > (ChartPanel?.H + 10000 ?? float.MaxValue))
-                    continue;
-                
-                // Dibujar línea horizontal que se extiende a través del área visible
                 RenderTarget.DrawLine(
                     new SharpDX.Vector2(lineStartX, y),
                     new SharpDX.Vector2(lineEndX, y),
@@ -836,8 +446,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Width
                 );
                 
-                // Dibujar etiqueta en la posición visible
-                Point textPoint = new Point(labelX, y - (level.LabelLayout.Metrics.Height / 15));
+                Point textPoint = new Point(labelX, y - level.LabelLayout.Metrics.Height / 2);
                 RenderTarget.DrawTextLayout(textPoint.ToVector2(), level.LabelLayout, labelBrush);
             }
         }
@@ -850,41 +459,33 @@ namespace NinjaTrader.NinjaScript.Indicators
         public bool UseAutomaticDate { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "NR2 Level Type", Description = "False = Previous Day Close, True = Current Day Open", Order = 2, GroupName = "Parameters")]
-        public bool UseCurrentDayOpen 
-        { 
-            get { return useCurrentDayOpen; } 
-            set { useCurrentDayOpen = value; } 
-        }
+        [Display(Name = "NR2 Level Type", Description = "Select whether NR2 should use the previous day's close or current day's open.", Order = 2, GroupName = "Parameters")]
+        public NR2LevelType Nr2LevelType { get; set; }
+
+		[NinjaScriptProperty]
+        [Display(Name = "TC/TV Multiplier", Description = "Selects the multiplier for TC and TV levels.", Order = 3, GroupName = "Parameters")]
+        public TCVMultiplierType TCVMultiplier { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "GAP", Description = "If true, adds half of the opening gap-up to the previous day's range.", Order = 3, GroupName = "Parameters")]
+        [Display(Name = "GAP", Description = "If true, adds the opening gap to the previous day's range.", Order = 4, GroupName = "Parameters")]
         public bool UseGapCalculation { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Selected Date", Description = "Date for calculating levels (only used if 'Use Automatic Date' is false).", Order = 3, GroupName = "Parameters")]
-        public DateTime SelectedDate
-        {
-            get { return selectedDate; }
-            set { selectedDate = value; }
-        }
+        [Display(Name = "Selected Date", Description = "Date for calculating levels (only used if 'Use Automatic Date' is false).", Order = 5, GroupName = "Parameters")]
+        public DateTime SelectedDate { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Manual Price", Description = "Base price for levels. If 0, uses prior day's close.", Order = 4, GroupName = "Parameters")]
-        public double ManualPrice
-        {
-            get { return manualPrice; }
-            set { manualPrice = Math.Max(0, value); }
-        }
+        [Display(Name = "Manual Price", Description = "Base price for levels. If 0, uses prior day's close.", Order = 6, GroupName = "Parameters")]
+        public double ManualPrice { get; set; }
 
         [NinjaScriptProperty]
         [Range(1, int.MaxValue)]
-        [Display(Name = "Line Width", Description = "Width of the level lines", Order = 4, GroupName = "Visuals")]
-        public int Width { get; set; }
+        [Display(Name = "Line Width", Description = "Width of the level lines", Order = 1, GroupName = "Visuals")]
+        public int Width { get; set; } 
         
         [NinjaScriptProperty]
         [Range(0, int.MaxValue)]
-        [Display(Name = "Line Buffer (Pixels)", Description = "Pixel buffer from the last bar for line drawing.", Order = 5, GroupName = "Visuals")]
+        [Display(Name = "Line Buffer (Pixels)", Description = "Pixel buffer from the last bar for line drawing.", Order = 2, GroupName = "Visuals")]
         public int LineBufferPixels { get; set; }
 
         #endregion
@@ -898,18 +499,18 @@ namespace NinjaTrader.NinjaScript.Indicators
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
 		private AvalPV21[] cacheAvalPV21;
-		public AvalPV21 AvalPV21(bool useAutomaticDate, bool useCurrentDayOpen, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public AvalPV21 AvalPV21(TCVMultiplierType tCVMultiplier)
 		{
-			return AvalPV21(Input, useAutomaticDate, useCurrentDayOpen, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
+			return AvalPV21(Input, tCVMultiplier);
 		}
 
-		public AvalPV21 AvalPV21(ISeries<double> input, bool useAutomaticDate, bool useCurrentDayOpen, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public AvalPV21 AvalPV21(ISeries<double> input, TCVMultiplierType tCVMultiplier)
 		{
 			if (cacheAvalPV21 != null)
 				for (int idx = 0; idx < cacheAvalPV21.Length; idx++)
-					if (cacheAvalPV21[idx] != null && cacheAvalPV21[idx].UseAutomaticDate == useAutomaticDate && cacheAvalPV21[idx].UseCurrentDayOpen == useCurrentDayOpen && cacheAvalPV21[idx].UseGapCalculation == useGapCalculation && cacheAvalPV21[idx].SelectedDate == selectedDate && cacheAvalPV21[idx].ManualPrice == manualPrice && cacheAvalPV21[idx].Width == width && cacheAvalPV21[idx].LineBufferPixels == lineBufferPixels && cacheAvalPV21[idx].EqualsInput(input))
+					if (cacheAvalPV21[idx] != null && cacheAvalPV21[idx].TCVMultiplier == tCVMultiplier && cacheAvalPV21[idx].EqualsInput(input))
 						return cacheAvalPV21[idx];
-			return CacheIndicator<AvalPV21>(new AvalPV21(){ UseAutomaticDate = useAutomaticDate, UseCurrentDayOpen = useCurrentDayOpen, UseGapCalculation = useGapCalculation, SelectedDate = selectedDate, ManualPrice = manualPrice, Width = width, LineBufferPixels = lineBufferPixels }, input, ref cacheAvalPV21);
+			return CacheIndicator<AvalPV21>(new AvalPV21(){ TCVMultiplier = tCVMultiplier }, input, ref cacheAvalPV21);
 		}
 	}
 }
@@ -918,14 +519,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.AvalPV21 AvalPV21(bool useAutomaticDate, bool useCurrentDayOpen, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public Indicators.AvalPV21 AvalPV21(TCVMultiplierType tCVMultiplier)
 		{
-			return indicator.AvalPV21(Input, useAutomaticDate, useCurrentDayOpen, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
+			return indicator.AvalPV21(Input, tCVMultiplier);
 		}
 
-		public Indicators.AvalPV21 AvalPV21(ISeries<double> input , bool useAutomaticDate, bool useCurrentDayOpen, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public Indicators.AvalPV21 AvalPV21(ISeries<double> input , TCVMultiplierType tCVMultiplier)
 		{
-			return indicator.AvalPV21(input, useAutomaticDate, useCurrentDayOpen, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
+			return indicator.AvalPV21(input, tCVMultiplier);
 		}
 	}
 }
@@ -934,14 +535,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.AvalPV21 AvalPV21(bool useAutomaticDate, bool useCurrentDayOpen, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public Indicators.AvalPV21 AvalPV21(TCVMultiplierType tCVMultiplier)
 		{
-			return indicator.AvalPV21(Input, useAutomaticDate, useCurrentDayOpen, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
+			return indicator.AvalPV21(Input, tCVMultiplier);
 		}
 
-		public Indicators.AvalPV21 AvalPV21(ISeries<double> input , bool useAutomaticDate, bool useCurrentDayOpen, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public Indicators.AvalPV21 AvalPV21(ISeries<double> input , TCVMultiplierType tCVMultiplier)
 		{
-			return indicator.AvalPV21(input, useAutomaticDate, useCurrentDayOpen, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
+			return indicator.AvalPV21(input, tCVMultiplier);
 		}
 	}
 }
