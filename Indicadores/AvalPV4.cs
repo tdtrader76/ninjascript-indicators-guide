@@ -26,7 +26,7 @@ using System.Xml.Serialization;
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
-    public class AvalPV3 : Indicator
+    public class AvalPV4 : Indicator
     {
         #region Variables
         // Input Parameters
@@ -47,8 +47,13 @@ namespace NinjaTrader.NinjaScript.Indicators
         		private int manualStartBar = -1;
         		private int manualEndBar = -1;
 
-        // A dictionary to hold all price levels for easier management
-        private readonly Dictionary<string, PriceLevel> priceLevels = new Dictionary<string, PriceLevel>();
+        // Dictionaries to hold price levels for current and previous day
+        private Dictionary<string, PriceLevel> currentPriceLevels = new Dictionary<string, PriceLevel>();
+        private Dictionary<string, PriceLevel> previousPriceLevels = new Dictionary<string, PriceLevel>();
+
+		// Bar indices for drawing previous day's lines
+		private int previousDayStartBar = -1;
+		private int previousDayEndBar = -1;
 
         // Represents a calculated price level
         private class PriceLevel : IDisposable
@@ -86,7 +91,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 case State.SetDefaults:
                     Description = @"Calculates and displays price levels based on the previous day's range and a manual price.";
-                    Name = "AvalPV3";
+                    Name = "AvalPV4";
                     Calculate = Calculate.OnBarClose;
                     IsOverlay = true;
                     DisplayInDataBox = true;
@@ -132,7 +137,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                     AddDataSeries(Bars.Instrument.FullName, BarsPeriodType.Day, 1);
 
                     // Initialize the price levels
-                    InitializePriceLevels();
+                    InitializePriceLevels(currentPriceLevels);
+                	InitializePriceLevels(previousPriceLevels);
 
                     // Reset session variables
                     currentDate = Core.Globals.MinDate;
@@ -169,7 +175,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                         brush?.Dispose();
                     dxBrushes.Clear();
 
-                    foreach (var level in priceLevels.Values)
+                    foreach (var level in currentPriceLevels.Values)
+                        level?.Dispose();
+					foreach (var level in previousPriceLevels.Values)
                         level?.Dispose();
                     break;
 
@@ -179,7 +187,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     
                     if (!Bars.BarsType.IsIntraday)
                     {
-                        Draw.TextFixed(this, "NinjaScriptInfo", "AvalPV3 only works on intraday charts", TextPosition.BottomRight);
+                        Draw.TextFixed(this, "NinjaScriptInfo", "AvalPV4 only works on intraday charts", TextPosition.BottomRight);
                         return;
                     }
                     
@@ -237,6 +245,16 @@ namespace NinjaTrader.NinjaScript.Indicators
                 
                 if (isNewDay)
                 {
+                    // Archive drawing range for the day that just ended.
+					previousDayStartBar = firstBarOfCurrentDay;
+					previousDayEndBar = CurrentBar - 1;
+
+					// Swap dictionaries to archive the old levels
+					var tempLevels = previousPriceLevels;
+					previousPriceLevels = currentPriceLevels;
+					currentPriceLevels = tempLevels;
+					InitializePriceLevels(currentPriceLevels); // Re-initialize the now-current dictionary
+
                     // Guardar valores del día anterior
                     priorDayHigh = currentDayHigh;
                     priorDayLow = currentDayLow;
@@ -264,7 +282,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         if (basePrice > 0)
                         {
                             Print($"DIAGNOSTIC: Using {Nr2LevelType} for NR2 level calculation");
-                            CalculateAllLevels(previousDayRange, basePrice);
+                            CalculateAllLevels(previousDayRange, basePrice, currentPriceLevels);
                             needsLayoutUpdate = true;
                         }
                     }
@@ -297,7 +315,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         #region Private Methods
 
-        private void InitializePriceLevels()
+        private void InitializePriceLevels(Dictionary<string, PriceLevel> levels)
         {
             // Usar inicialización en bloque para mejorar la eficiencia
             var levelDefinitions = new[]
@@ -324,10 +342,10 @@ namespace NinjaTrader.NinjaScript.Indicators
             };
 
             // Limpiar y reconstruir el diccionario
-            priceLevels.Clear();
+            levels.Clear();
             foreach (var def in levelDefinitions)
             {
-                priceLevels[def.Name] = new PriceLevel(def.Name, def.Brush, def.Modifier);
+                levels[def.Name] = new PriceLevel(def.Name, def.Brush, def.Modifier);
             }
         }
         
@@ -501,7 +519,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     double gap = Math.Abs(selectedDayOpen - priorDayClose);
                     Print($"DIAGNOSTIC: Gap calculation = |{selectedDayOpen} (Open) - {priorDayClose} (Close)| = {gap}");
                     range += (gap);
-                    Print($"DIAGNOSTIC: Modified range (adding gap) = {range}");
+                    Print($"DIAGNOSTIC: Modified range (adding half gap) = {range}");
                 }
             }
 
@@ -522,12 +540,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (basePrice > 0)
             {
                 Print($"DIAGNOSTIC: Using Base Price={basePrice} and Range={range} for calculations.");
-                CalculateAllLevels(range, basePrice);
+                CalculateAllLevels(range, basePrice, currentPriceLevels);
                 needsLayoutUpdate = true;
             }
         }
 
-        private void CalculateAllLevels(double dayRange, double basePrice)
+        private void CalculateAllLevels(double dayRange, double basePrice, Dictionary<string, PriceLevel> levels)
         {
             try
             {
@@ -550,85 +568,86 @@ namespace NinjaTrader.NinjaScript.Indicators
                 double range050 = dayRange * 0.50;
                 double range0125 = dayRange * 0.125;
                 
-                		        // Asignar valores a los niveles y a los plots
-                		        priceLevels["Q1"].Value = q1Level;
-                		        if (IsOnBarUpdate && q1Level > 0) Q1[0] = q1Level;
+                // Asignar valores a los niveles y a los plots
+		        levels["Q1"].Value = q1Level;
+		        if (CurrentBar >= 0 && q1Level > 0) Q1[0] = q1Level;
+
+		        levels["Q4"].Value = q4Level;
+		        if (CurrentBar >= 0 && q4Level > 0) Q4[0] = q4Level;
+
+		        levels["Q2"].Value = RoundToQuarter(q1Level - range025);
+		        if (CurrentBar >= 0 && levels["Q2"].Value > 0) Q2[0] = levels["Q2"].Value;
+
+		        levels["Q3"].Value = RoundToQuarter(q4Level + range025);
+		        if (CurrentBar >= 0 && levels["Q3"].Value > 0) Q3[0] = levels["Q3"].Value;
+
+		        levels["Q2/3"].Value = RoundToQuarter(q1Level - range0375);
+		        if (CurrentBar >= 0 && levels["Q2/3"].Value > 0) Q2_3[0] = levels["Q2/3"].Value;
+
+		        levels["Q3/4"].Value = RoundToQuarter(q4Level + range0375);
+		        if (CurrentBar >= 0 && levels["Q3/4"].Value > 0) Q3_4[0] = levels["Q3/4"].Value;
+
+		        levels["NR2"].Value = RoundToQuarter(basePrice);
+		        if (CurrentBar >= 0 && levels["NR2"].Value > 0) NR2[0] = levels["NR2"].Value;
+
+		        levels["TC"].Value = RoundToQuarter(q1Level - range_tc_std1);
+		        if (CurrentBar >= 0 && levels["TC"].Value > 0) TC[0] = levels["TC"].Value;
+
+		        levels["NR1"].Value = RoundToQuarter(q1Level - range_nr1_std2);
+		        if (CurrentBar >= 0 && levels["NR1"].Value > 0) NR1[0] = levels["NR1"].Value;
+
+		        levels["Std1+"].Value = RoundToQuarter(q1Level + range_tc_std1);
+		        if (CurrentBar >= 0 && levels["Std1+"].Value > 0) Std1Plus[0] = levels["Std1+"].Value;
+
+		        levels["Std2+"].Value = RoundToQuarter(q1Level + range_nr1_std2);
+		        if (CurrentBar >= 0 && levels["Std2+"].Value > 0) Std2Plus[0] = levels["Std2+"].Value;
+
+		        levels["Std3+"].Value = RoundToQuarter(q1Level + range_std3);
+		        if (CurrentBar >= 0 && levels["Std3+"].Value > 0) Std3Plus[0] = levels["Std3+"].Value;
+
+		        levels["1D+"].Value = RoundToQuarter(q1Level + range050);
+		        if (CurrentBar >= 0 && levels["1D+"].Value > 0) OneDPlus[0] = levels["1D+"].Value;
+
+		        levels["NR3"].Value = RoundToQuarter(q4Level + range0159);
+		        if (CurrentBar >= 0 && levels["NR3"].Value > 0) NR3[0] = levels["NR3"].Value;
+
+		        levels["TV"].Value = RoundToQuarter(q4Level + range0125);
+		        if (CurrentBar >= 0 && levels["TV"].Value > 0) TV[0] = levels["TV"].Value;
+
+		        levels["Std1-"].Value = RoundToQuarter(q4Level - range_tc_std1);
+		        if (CurrentBar >= 0 && levels["Std1-"].Value > 0) Std1Minus[0] = levels["Std1-"].Value;
+
+		        levels["Std2-"].Value = RoundToQuarter(q4Level - range_nr1_std2);
+		        if (CurrentBar >= 0 && levels["Std2-"].Value > 0) Std2Minus[0] = levels["Std2-"].Value;
+
+		        levels["Std3-"].Value = RoundToQuarter(q4Level - range_std3);
+		        if (CurrentBar >= 0 && levels["Std3-"].Value > 0) Std3Minus[0] = levels["Std3-"].Value;
+
+		        levels["1D-"].Value = RoundToQuarter(q4Level - range050);
+		        if (CurrentBar >= 0 && levels["1D-"].Value > 0) OneDMinus[0] = levels["1D-"].Value;
                 
-                		        priceLevels["Q4"].Value = q4Level;
-                		        if (IsOnBarUpdate && q4Level > 0) Q4[0] = q4Level;
-                
-                		        priceLevels["Q2"].Value = RoundToQuarter(q1Level - range025);
-                		        if (IsOnBarUpdate && priceLevels["Q2"].Value > 0) Q2[0] = priceLevels["Q2"].Value;
-                
-                		        priceLevels["Q3"].Value = RoundToQuarter(q4Level + range025);
-                		        if (IsOnBarUpdate && priceLevels["Q3"].Value > 0) Q3[0] = priceLevels["Q3"].Value;
-                
-                		        priceLevels["Q2/3"].Value = RoundToQuarter(q1Level - range0375);
-                		        if (IsOnBarUpdate && priceLevels["Q2/3"].Value > 0) Q2_3[0] = priceLevels["Q2/3"].Value;
-                
-                		        priceLevels["Q3/4"].Value = RoundToQuarter(q4Level + range0375);
-                		        if (IsOnBarUpdate && priceLevels["Q3/4"].Value > 0) Q3_4[0] = priceLevels["Q3/4"].Value;
-                
-                		        priceLevels["NR2"].Value = RoundToQuarter(basePrice);
-                		        if (IsOnBarUpdate && priceLevels["NR2"].Value > 0) NR2[0] = priceLevels["NR2"].Value;
-                
-                		        priceLevels["TC"].Value = RoundToQuarter(q1Level - range_tc_std1);
-                		        if (IsOnBarUpdate && priceLevels["TC"].Value > 0) TC[0] = priceLevels["TC"].Value;
-                
-                		        priceLevels["NR1"].Value = RoundToQuarter(q1Level - range_nr1_std2);
-                		        if (IsOnBarUpdate && priceLevels["NR1"].Value > 0) NR1[0] = priceLevels["NR1"].Value;
-                
-                		        priceLevels["Std1+"].Value = RoundToQuarter(q1Level + range_tc_std1);
-                		        if (IsOnBarUpdate && priceLevels["Std1+"].Value > 0) Std1Plus[0] = priceLevels["Std1+"].Value;
-                
-                		        priceLevels["Std2+"].Value = RoundToQuarter(q1Level - range_nr1_std2);
-                		        if (IsOnBarUpdate && priceLevels["Std2+"].Value > 0) Std2Plus[0] = priceLevels["Std2+"].Value;
-                
-                		        priceLevels["Std3+"].Value = RoundToQuarter(q1Level + range_std3);
-                		        if (IsOnBarUpdate && priceLevels["Std3+"].Value > 0) Std3Plus[0] = priceLevels["Std3+"].Value;
-                
-                		        priceLevels["1D+"].Value = RoundToQuarter(q1Level + range050);
-                		        if (IsOnBarUpdate && priceLevels["1D+"].Value > 0) OneDPlus[0] = priceLevels["1D+"].Value;
-                
-                		        priceLevels["NR3"].Value = RoundToQuarter(q4Level + range0159);
-                		        if (IsOnBarUpdate && priceLevels["NR3"].Value > 0) NR3[0] = priceLevels["NR3"].Value;
-                
-                		        priceLevels["TV"].Value = RoundToQuarter(q4Level + range0125);
-                		        if (IsOnBarUpdate && priceLevels["TV"].Value > 0) TV[0] = priceLevels["TV"].Value;
-                
-                		        priceLevels["Std1-"].Value = RoundToQuarter(q4Level - range_tc_std1);
-                		        if (IsOnBarUpdate && priceLevels["Std1-"].Value > 0) Std1Minus[0] = priceLevels["Std1-"].Value;
-                
-                		        priceLevels["Std2-"].Value = RoundToQuarter(q4Level - range_nr1_std2);
-                		        if (IsOnBarUpdate && priceLevels["Std2-"].Value > 0) Std2Minus[0] = priceLevels["Std2-"].Value;
-                
-                		        priceLevels["Std3-"].Value = RoundToQuarter(q4Level - range_std3);
-                		        if (IsOnBarUpdate && priceLevels["Std3-"].Value > 0) Std3Minus[0] = priceLevels["Std3-"].Value;
-                
-                		        priceLevels["1D-"].Value = RoundToQuarter(q4Level - range050);
-                		        if (IsOnBarUpdate && priceLevels["1D-"].Value > 0) OneDMinus[0] = priceLevels["1D-"].Value;                
                 // Mostrar los niveles calculados en el output
                 Print($"--- NIVELES CALCULADOS ---");
                 Print($"Rango del día: {dayRange:F5}");
-                Print($"Precio base (NR2): {priceLevels["NR2"].Value:F5}");
-                Print($"Q1: {priceLevels["Q1"].Value:F5}");
-                Print($"Q2: {priceLevels["Q2"].Value:F5}");
-                Print($"Q3: {priceLevels["Q3"].Value:F5}");
-                Print($"Q4: {priceLevels["Q4"].Value:F5}");
-                Print($"Q2/3: {priceLevels["Q2/3"].Value:F5}");
-                Print($"Q3/4: {priceLevels["Q3/4"].Value:F5}");
-                Print($"TC: {priceLevels["TC"].Value:F5}");
-                Print($"NR1: {priceLevels["NR1"].Value:F5}");
-                Print($"NR3: {priceLevels["NR3"].Value:F5}");
-                Print($"TV: {priceLevels["TV"].Value:F5}");
-                Print($"Std1+: {priceLevels["Std1+"].Value:F5}");
-                Print($"Std2+: {priceLevels["Std2+"].Value:F5}");
-                Print($"Std3+: {priceLevels["Std3+"].Value:F5}");
-                Print($"1D+: {priceLevels["1D+"].Value:F5}");
-                Print($"Std1-: {priceLevels["Std1-"].Value:F5}");
-                Print($"Std2-: {priceLevels["Std2-"].Value:F5}");
-                Print($"Std3-: {priceLevels["Std3-"].Value:F5}");
-                Print($"1D-: {priceLevels["1D-"].Value:F5}");
+                Print($"Precio base (NR2): {levels["NR2"].Value:F5}");
+                Print($"Q1: {levels["Q1"].Value:F5}");
+                Print($"Q2: {levels["Q2"].Value:F5}");
+                Print($"Q3: {levels["Q3"].Value:F5}");
+                Print($"Q4: {levels["Q4"].Value:F5}");
+                Print($"Q2/3: {levels["Q2/3"].Value:F5}");
+                Print($"Q3/4: {levels["Q3/4"].Value:F5}");
+                Print($"TC: {levels["TC"].Value:F5}");
+                Print($"NR1: {levels["NR1"].Value:F5}");
+                Print($"NR3: {levels["NR3"].Value:F5}");
+                Print($"TV: {levels["TV"].Value:F5}");
+                Print($"Std1+: {levels["Std1+"].Value:F5}");
+                Print($"Std2+: {levels["Std2+"].Value:F5}");
+                Print($"Std3+: {levels["Std3+"].Value:F5}");
+                Print($"1D+: {levels["1D+"].Value:F5}");
+                Print($"Std1-: {levels["Std1-"].Value:F5}");
+                Print($"Std2-: {levels["Std2-"].Value:F5}");
+                Print($"Std3-: {levels["Std3-"].Value:F5}");
+                Print($"1D-: {levels["1D-"].Value:F5}");
                 Print($"------------------------");
             }
             catch (Exception ex)
@@ -637,7 +656,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
-        private void UpdateTextLayouts()
+        private void UpdateTextLayouts(Dictionary<string, PriceLevel> levels)
         {
             // Verificación temprana para evitar procesamiento innecesario
             if (ChartControl == null) return;
@@ -645,7 +664,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             // Usar 'using' para asegurar la liberación correcta de recursos
             using (TextFormat textFormat = ChartControl.Properties.LabelFont.ToDirectWriteTextFormat())
             {
-                foreach (var level in priceLevels.Values)
+                foreach (var level in levels.Values)
                 {
                     // Liberar el layout anterior si existe
                     level.LabelLayout?.Dispose();
@@ -680,80 +699,71 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
 
         protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
-        {
-            // Verificación rápida de salida para mejorar el rendimiento
-            if (priceLevels.Count == 0 || !priceLevels.TryGetValue("Q1", out PriceLevel q1) || double.IsNaN(q1.Value))
-                return;
-
-            // Actualizar layouts solo si es necesario
-            if (needsLayoutUpdate)
-            {
-                UpdateTextLayouts();
-                needsLayoutUpdate = false;
-            }
-
-            // Verificaciones de límites tempranas
-            int lastBarIndex = ChartBars?.ToIndex ?? -1;
-            if (lastBarIndex < 0) return;
-
-			int startBarIndex, endBarIndex;
-
-			if(UseAutomaticDate)
+		{
+			if (needsLayoutUpdate)
 			{
-				startBarIndex = firstBarOfCurrentDay;
-				endBarIndex = lastBarIndex;
-			}
-			else
-			{
-				startBarIndex = manualStartBar;
-				endBarIndex = manualEndBar;
+				UpdateTextLayouts(currentPriceLevels);
+				UpdateTextLayouts(previousPriceLevels);
+				needsLayoutUpdate = false;
 			}
 
-			if (startBarIndex < 0 || endBarIndex < startBarIndex)
+			if (UseAutomaticDate)
+			{
+				// Draw previous day's lines (not extended)
+				DrawLevelsForRange(chartControl, chartScale, previousPriceLevels, previousDayStartBar, previousDayEndBar, false);
+
+				// Draw current day's lines (extended)
+				DrawLevelsForRange(chartControl, chartScale, currentPriceLevels, firstBarOfCurrentDay, ChartBars.ToIndex, true);
+			}
+			else // Manual Mode
+			{
+				// In manual mode, we only draw one set of lines for the selected day
+				DrawLevelsForRange(chartControl, chartScale, currentPriceLevels, manualStartBar, manualEndBar, false);
+			}
+		}
+
+		private void DrawLevelsForRange(ChartControl chartControl, ChartScale chartScale, Dictionary<string, PriceLevel> levels, int startBarIndex, int endBarIndex, bool extendLine)
+		{
+			if (levels.Count == 0 || !levels.TryGetValue("Q1", out PriceLevel q1) || double.IsNaN(q1.Value) || startBarIndex < 0 || endBarIndex < startBarIndex)
 				return;
 
-            // Para líneas que se extienden dinámicamente, usar desde firstBarOfCurrentDay hasta la última barra + 10 píxeles
-            double startBarX = chartControl.GetXByBarIndex(ChartBars, startBarIndex);
-            float lineStartX = (float)startBarX;
+			int lastBarIndex = ChartBars?.ToIndex ?? -1;
+			if (lastBarIndex < 0) return;
 
-            // Encontrar la última barra visible y extender 10 píxeles después
-            double lastBarX = chartControl.GetXByBarIndex(ChartBars, endBarIndex);
-            float lineEndX = (float)lastBarX;
+			double startBarX = chartControl.GetXByBarIndex(ChartBars, startBarIndex);
+			float lineStartX = (float)startBarX;
 
-			// Si estamos en modo automático, extendemos la línea un poco más allá de la última barra.
-			if (UseAutomaticDate)
+			double endBarX = chartControl.GetXByBarIndex(ChartBars, endBarIndex);
+			float lineEndX = (float)endBarX;
+
+			if (extendLine && UseAutomaticDate) // Only extend in automatic mode
 			{
 				lineEndX += 10;
 			}
-            
-            // Verificar que tenemos coordenadas válidas
-            if (lineEndX <= lineStartX) return;
+			
+			if (lineEndX <= lineStartX) return;
 
-            // Posición de etiqueta optimizada
-            float labelX = lineEndX + 5;
-            SharpDX.Direct2D1.Brush labelBrush = GetDxBrush(chartControl.Properties.ChartText);
+			float labelX = lineEndX + 5;
+			SharpDX.Direct2D1.Brush labelBrush = GetDxBrush(chartControl.Properties.ChartText);
 
-            // Renderizar niveles con manejo eficiente de recursos
-            foreach (var level in priceLevels.Values)
-            {
-                // Verificaciones rápidas de salida
-                if (double.IsNaN(level.Value) || level.LabelLayout == null)
-                    continue;
+			foreach (var level in levels.Values)
+			{
+				if (double.IsNaN(level.Value) || level.LabelLayout == null)
+					continue;
 
-                float y = (float)chartScale.GetYByValue(level.Value);
-                
-                // Dibujar línea y etiqueta
-                RenderTarget.DrawLine(
-                    new SharpDX.Vector2(lineStartX, y),
-                    new SharpDX.Vector2(lineEndX, y),
-                    GetDxBrush(level.LineBrush),
-                    Width
-                );
-                
-                Point textPoint = new Point(labelX, y - level.LabelLayout.Metrics.Height / 2);
-                RenderTarget.DrawTextLayout(textPoint.ToVector2(), level.LabelLayout, labelBrush);
-            }
-        }
+				float y = (float)chartScale.GetYByValue(level.Value);
+				
+				RenderTarget.DrawLine(
+					new SharpDX.Vector2(lineStartX, y),
+					new SharpDX.Vector2(lineEndX, y),
+					GetDxBrush(level.LineBrush),
+					Width
+				);
+				
+				Point textPoint = new Point(labelX, y - level.LabelLayout.Metrics.Height / 2);
+				RenderTarget.DrawTextLayout(textPoint.ToVector2(), level.LabelLayout, labelBrush);
+			}
+		}
         #endregion
 
         #region Properties
@@ -832,19 +842,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 {
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
-		private AvalPV3[] cacheAvalPV3;
-		public AvalPV3 AvalPV3(bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		private AvalPV4[] cacheAvalPV4;
+		public AvalPV4 AvalPV4(bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
 		{
-			return AvalPV3(Input, useAutomaticDate, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
+			return AvalPV4(Input, useAutomaticDate, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
 		}
 
-		public AvalPV3 AvalPV3(ISeries<double> input, bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public AvalPV4 AvalPV4(ISeries<double> input, bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
 		{
-			if (cacheAvalPV3 != null)
-				for (int idx = 0; idx < cacheAvalPV3.Length; idx++)
-					if (cacheAvalPV3[idx] != null && cacheAvalPV3[idx].UseAutomaticDate == useAutomaticDate && cacheAvalPV3[idx].Nr2LevelType == nr2LevelType && cacheAvalPV3[idx].UseGapCalculation == useGapCalculation && cacheAvalPV3[idx].SelectedDate == selectedDate && cacheAvalPV3[idx].ManualPrice == manualPrice && cacheAvalPV3[idx].Width == width && cacheAvalPV3[idx].LineBufferPixels == lineBufferPixels && cacheAvalPV3[idx].EqualsInput(input))
-						return cacheAvalPV3[idx];
-			return CacheIndicator<AvalPV3>(new AvalPV3(){ UseAutomaticDate = useAutomaticDate, Nr2LevelType = nr2LevelType, UseGapCalculation = useGapCalculation, SelectedDate = selectedDate, ManualPrice = manualPrice, Width = width, LineBufferPixels = lineBufferPixels }, input, ref cacheAvalPV3);
+			if (cacheAvalPV4 != null)
+				for (int idx = 0; idx < cacheAvalPV4.Length; idx++)
+					if (cacheAvalPV4[idx] != null && cacheAvalPV4[idx].UseAutomaticDate == useAutomaticDate && cacheAvalPV4[idx].Nr2LevelType == nr2LevelType && cacheAvalPV4[idx].UseGapCalculation == useGapCalculation && cacheAvalPV4[idx].SelectedDate == selectedDate && cacheAvalPV4[idx].ManualPrice == manualPrice && cacheAvalPV4[idx].Width == width && cacheAvalPV4[idx].LineBufferPixels == lineBufferPixels && cacheAvalPV4[idx].EqualsInput(input))
+						return cacheAvalPV4[idx];
+			return CacheIndicator<AvalPV4>(new AvalPV4(){ UseAutomaticDate = useAutomaticDate, Nr2LevelType = nr2LevelType, UseGapCalculation = useGapCalculation, SelectedDate = selectedDate, ManualPrice = manualPrice, Width = width, LineBufferPixels = lineBufferPixels }, input, ref cacheAvalPV4);
 		}
 	}
 }
@@ -853,14 +863,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.AvalPV3 AvalPV3(bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public Indicators.AvalPV4 AvalPV4(bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
 		{
-			return indicator.AvalPV3(Input, useAutomaticDate, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
+			return indicator.AvalPV4(Input, useAutomaticDate, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
 		}
 
-		public Indicators.AvalPV3 AvalPV3(ISeries<double> input , bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public Indicators.AvalPV4 AvalPV4(ISeries<double> input , bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
 		{
-			return indicator.AvalPV3(input, useAutomaticDate, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
+			return indicator.AvalPV4(input, useAutomaticDate, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
 		}
 	}
 }
@@ -869,14 +879,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.AvalPV3 AvalPV3(bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public Indicators.AvalPV4 AvalPV4(bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
 		{
-			return indicator.AvalPV3(Input, useAutomaticDate, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
+			return indicator.AvalPV4(Input, useAutomaticDate, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
 		}
 
-		public Indicators.AvalPV3 AvalPV3(ISeries<double> input , bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
+		public Indicators.AvalPV4 AvalPV4(ISeries<double> input , bool useAutomaticDate, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels)
 		{
-			return indicator.AvalPV3(input, useAutomaticDate, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
+			return indicator.AvalPV4(input, useAutomaticDate, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels);
 		}
 	}
 }
