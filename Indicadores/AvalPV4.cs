@@ -26,6 +26,13 @@ using System.Xml.Serialization;
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
+    public enum LabelAlignment
+    {
+        Start,
+        Middle,
+        End
+    }
+
     public class AvalPV4 : Indicator
     {
         #region Variables
@@ -110,6 +117,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     ManualPrice = 0.0;
                     Width = 1; // Default line width
                     LineBufferPixels = 125; // Default buffer for the line drawing
+                    LabelAlignment = LabelAlignment.End;
 
                     AddPlot(Brushes.Transparent, "Q1");
                     AddPlot(Brushes.Transparent, "Q4");
@@ -743,7 +751,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 			
 			if (lineEndX <= lineStartX) return;
 
-			float labelX = lineEndX + 5;
 			SharpDX.Direct2D1.Brush labelBrush = GetDxBrush(chartControl.Properties.ChartText);
 
 			foreach (var level in levels.Values)
@@ -753,6 +760,32 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 				float y = (float)chartScale.GetYByValue(level.Value);
 				
+				// --- START of new logic ---
+
+				// 1. Calculate Y position (above the line)
+				float labelY = y - level.LabelLayout.Metrics.Height - 2; // 2px buffer
+
+				// 2. Calculate X position based on alignment
+				float labelX;
+				switch (LabelAlignment)
+				{
+					case LabelAlignment.Start:
+						labelX = lineStartX + 5;
+						break;
+					
+					case LabelAlignment.Middle:
+						float lineWidth = lineEndX - lineStartX;
+						labelX = lineStartX + (lineWidth / 2) - (level.LabelLayout.Metrics.Width / 2);
+						break;
+					
+					case LabelAlignment.End:
+					default:
+						labelX = lineEndX + 5;
+						break;
+				}
+
+				// --- END of new logic ---
+
 				RenderTarget.DrawLine(
 					new SharpDX.Vector2(lineStartX, y),
 					new SharpDX.Vector2(lineEndX, y),
@@ -760,7 +793,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 					Width
 				);
 				
-				Point textPoint = new Point(labelX, y - level.LabelLayout.Metrics.Height / 2);
+				Point textPoint = new Point(labelX, labelY); // Use new coordinates
 				RenderTarget.DrawTextLayout(textPoint.ToVector2(), level.LabelLayout, labelBrush);
 			}
 		}
@@ -809,6 +842,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Range(0, int.MaxValue)]
         [Display(Name = "Line Buffer (Pixels)", Description = "Pixel buffer from the last bar for line drawing.", Order = 5, GroupName = "Visuals")]
         public int LineBufferPixels { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Label Alignment", Description = "Horizontal alignment of the price labels.", Order = 6, GroupName = "Visuals")]
+        public LabelAlignment LabelAlignment { get; set; }
 
 
         #region Exported Plots
