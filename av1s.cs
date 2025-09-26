@@ -26,14 +26,7 @@ using System.Xml.Serialization;
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
-    public enum LabelAlignment
-    {
-        Start,
-        Middle,
-        End
-    }
-
-    public class AV6 : Indicator
+    public class AV1 : Indicator
     {
         #region Variables
 
@@ -43,14 +36,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             public Dictionary<string, PriceLevel> Levels { get; }
             public int StartBarIndex { get; set; }
             public int EndBarIndex { get; set; }
-			public DateTime TradingDay { get; set; }
 
             public DayLevels()
             {
                 Levels = new Dictionary<string, PriceLevel>();
                 StartBarIndex = -1;
                 EndBarIndex = -1;
-				TradingDay = DateTime.MinValue;
             }
         }
 
@@ -73,7 +64,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         // Data structures for managing current and historical price levels
         private DayLevels currentDayLevels;
-        private readonly List<DayLevels> historicalLevels = new List<DayLevels>();
+        private readonly Queue<DayLevels> historicalLevels = new Queue<DayLevels>();
 
         // Represents a calculated price level
         private class PriceLevel : IDisposable
@@ -102,6 +93,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         // Caching and performance optimization
         private readonly Dictionary<System.Windows.Media.Brush, SharpDX.Direct2D1.Brush> dxBrushes = new Dictionary<System.Windows.Media.Brush, SharpDX.Direct2D1.Brush>();
         private bool needsLayoutUpdate = false;
+
+        // Dynamic labels system
+        private SharpDX.DirectWrite.TextFormat dynamicTextFormat;
+        private SharpDX.Direct2D1.SolidColorBrush dynamicTextBrush;
+        private Dictionary<DateTime, List<string>> dailyLevelLabels;
         #endregion
 
         protected override void OnStateChange()
@@ -109,8 +105,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             switch (State)
             {
                 case State.SetDefaults:
-                    Description = @"Calcula y muestra niveles de precios basados en el rango del día anterior y un precio manual, con etiquetas dinámicas.";
-                    Name = "AV6";
+                    Description = @"Calculates and displays price levels based on the previous day's range and a manual price.";
+                    Name = "AV1";
                     Calculate = Calculate.OnBarClose;
                     IsOverlay = true;
                     DisplayInDataBox = true;
@@ -129,8 +125,15 @@ namespace NinjaTrader.NinjaScript.Indicators
                     SelectedDate = DateTime.Today;
                     ManualPrice = 0.0;
                     Width = 1; // Default line width
-                    LabelBufferPixels = 20; // Default buffer for the label drawing
-                    LabelAlignment = LabelAlignment.End;
+                    LineBufferPixels = 125; // Default buffer for the line drawing
+
+                    // Dynamic labels parameters
+                    ShowDynamicLabels = true;
+                    LabelOffsetX = 15;
+                    LabelVerticalSpacing = 20;
+
+                    // Initialize dynamic labels dictionary
+                    dailyLevelLabels = new Dictionary<DateTime, List<string>>();
 
                     AddPlot(Brushes.Transparent, "Q1");
                     AddPlot(Brushes.Transparent, "Q8");
@@ -188,6 +191,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                             Print($"Error initializing SessionIterator: {ex.Message}");
                         }
                     }
+
+                    // Initialize daily level labels
+                    GenerateDailyLevelLabels();
                     break;
 
                 case State.Terminated:
@@ -199,22 +205,34 @@ namespace NinjaTrader.NinjaScript.Indicators
                     // Dispose of all level objects
                     if (currentDayLevels != null)
                         foreach (var level in currentDayLevels.Levels.Values) level?.Dispose();
-                    
+
                     foreach(var day in historicalLevels)
                         foreach (var level in day.Levels.Values) level?.Dispose();
-                    
+
+                    // Dispose dynamic labels resources
+                    if (dynamicTextFormat != null)
+                    {
+                        dynamicTextFormat.Dispose();
+                        dynamicTextFormat = null;
+                    }
+                    if (dynamicTextBrush != null)
+                    {
+                        dynamicTextBrush.Dispose();
+                        dynamicTextBrush = null;
+                    }
+
                     break;
 
                 case State.Historical:
                     // Configuration for historical data
                     SetZOrder(-1);
-                    
+
                     if (!Bars.BarsType.IsIntraday)
                     {
-                        Draw.TextFixed(this, "NinjaScriptInfo", "AV6 only works on intraday charts", TextPosition.BottomRight);
+                        Draw.TextFixed(this, "NinjaScriptInfo", "AV1 only works on intraday charts", TextPosition.BottomRight);
                         return;
                     }
-                    
+
                     // Calculate the levels once if UseAutomaticDate is false
                     if (!UseAutomaticDate)
 					{
@@ -260,32 +278,31 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 // Verificaciones tempranas para evitar procesamiento innecesario
                 if (CurrentBar < 1 || sessionIterator == null) return;
-                
+
                 DateTime tradingDay = sessionIterator.GetTradingDay(Time[0]);
                 if (tradingDay == DateTime.MinValue) return;
 
                 // Verificar si es un nuevo día o si necesitamos inicializar
                 bool isNewDay = currentDate != tradingDay || currentDayOpen == 0;
-                
+
                 if (isNewDay)
                 {
                     // Finalize the day that just ended and add it to the historical queue
                     if (currentDayLevels != null && currentDayLevels.StartBarIndex != -1)
                     {
                         currentDayLevels.EndBarIndex = CurrentBar - 1;
-                        historicalLevels.Add(currentDayLevels);
+                        historicalLevels.Enqueue(currentDayLevels);
 
                         // Maintain the queue size
                         if (historicalLevels.Count > DaysToDraw)
                         {
-                            historicalLevels.RemoveAt(0);
+                            historicalLevels.Dequeue();
                         }
                     }
 
                     // Start a new day
                     currentDayLevels = new DayLevels();
                     currentDayLevels.StartBarIndex = CurrentBar;
-					currentDayLevels.TradingDay = tradingDay;
                     InitializePriceLevels(currentDayLevels.Levels);
 
                     // Guardar valores del día anterior
@@ -303,7 +320,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         {
                             previousDayRange = ApplyGapCalculation(previousDayRange, priorDayClose, Time[0]);
                         }
-                        
+
                         // Obtener precio base para cálculo de niveles
                         double basePrice = ManualPrice;
                         if (basePrice.ApproxCompare(0) == 0)
@@ -380,13 +397,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                 levels[def.Name] = new PriceLevel(def.Name, def.Brush, def.Modifier);
             }
         }
-        
+
         private double RoundToQuarter(double value)
         {
             // Más eficiente: usar Math.Round con un factor de 4
             return Math.Round(value * 4) / 4;
         }
-        
+
         private void ValidateCalculatedValues()
         {
             // This method is no longer needed as the variables it validated have been removed.
@@ -418,7 +435,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 return priorDayClose;
             }
-            
+
             // Handle edge cases where the given time is before the second bar of the series
             Print($"DIAGNOSTIC: Could not find a prior day's close for the date {time:d}. The provided time might be too early in the data series.");
             return 0;
@@ -451,7 +468,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Print("DIAGNOSTIC: Daily series not ready, using prior day close for NR2 level");
                 }
             }
-            
+
             return priorDayClose;
         }
 
@@ -545,7 +562,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // Gap is between prior day's close and current (selected) day's open.
                 double selectedDayOpen = BarsArray[1].GetOpen(dateForLevels_DailyIndex);
                 Print($"GAP Calc: Using daily open of {selectedDayOpen} from {dateForLevels:d} and prior close of {priorDayClose} from {priorDayDate:d}");
-                
+
                 if (priorDayClose > 0 && selectedDayOpen > 0)
                 {
                     double gap = Math.Abs(selectedDayOpen - priorDayClose);
@@ -587,7 +604,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 double halfRange = dayRange / 2.0;
                 double q1Level = RoundToQuarter(basePrice + halfRange);
                 double q4Level = RoundToQuarter(basePrice - halfRange);
-                
+
                 // Precalcular múltiplos comunes del rango para evitar cálculos repetidos
                 double range_tc_std1 = dayRange * 0.0855;
                 double range_nr1_std2 = dayRange * 0.171;
@@ -599,7 +616,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 double range0375 = dayRange * 0.375;
                 double range050 = dayRange * 0.50;
                 double range0125 = dayRange * 0.125;
-                
+
                 // Asignar valores a los niveles y a los plots
 		        levels["Q1"].Value = q1Level;
 		        if (CurrentBar >= 0 && q1Level > 0) Q1[0] = q1Level;
@@ -657,7 +674,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		        levels["1D-"].Value = RoundToQuarter(q4Level - range050);
 		        if (CurrentBar >= 0 && levels["1D-"].Value > 0) OneDMinus[0] = levels["1D-"].Value;
-                
+
                 // Mostrar los niveles calculados en el output
                 Print($"--- NIVELES CALCULADOS ---");
                 Print($"Rango del día: {dayRange:F5}");
@@ -700,7 +717,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             // Verificación temprana para evitar procesamiento innecesario
             if (ChartControl == null) return;
-            
+
             // Usar 'using' para asegurar la liberación correcta de recursos
             using (TextFormat textFormat = ChartControl.Properties.LabelFont.ToDirectWriteTextFormat())
             {
@@ -708,21 +725,21 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     // Liberar el layout anterior si existe
                     level.LabelLayout?.Dispose();
-                    
+
                     // Saltar niveles sin valor válido
                     if (double.IsNaN(level.Value))
                     {
                         level.LabelLayout = null;
                         continue;
                     }
-                    
+
                     // Crear nueva etiqueta con el valor y el modificador
                     string labelText;
                     if (!string.IsNullOrEmpty(level.Modifier))
                         labelText = $"{level.Name} ({level.Modifier}) {level.Value:F2}";
                     else
                         labelText = $"{level.Name} {level.Value:F2}";
-                    
+
                     level.LabelLayout = new TextLayout(Core.Globals.DirectWriteFactory, labelText, textFormat, ChartPanel?.W ?? 0, textFormat.FontSize);
                 }
             }
@@ -748,105 +765,326 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			if (UseAutomaticDate)
 			{
-				// 1. Find the day whose labels should be drawn
-				DayLevels dayToDrawLabels = null;
-				if (ChartBars != null && ChartBars.ToIndex > 0 && sessionIterator != null)
-				{
-					DateTime lastVisibleTime = Bars.GetTime(ChartBars.ToIndex);
-					DateTime lastVisibleDay = sessionIterator.GetTradingDay(lastVisibleTime);
+                // Draw historical days
+                foreach (var day in historicalLevels)
+                {
+                    DrawLevelsForRange(chartControl, chartScale, day.Levels, day.StartBarIndex, day.EndBarIndex, false);
+                }
 
-					if (lastVisibleDay != DateTime.MinValue)
-					{
-						if (currentDayLevels != null && currentDayLevels.TradingDay == lastVisibleDay)
-							dayToDrawLabels = currentDayLevels;
-						else
-							dayToDrawLabels = historicalLevels.LastOrDefault(d => d.TradingDay == lastVisibleDay);
-					}
-				}
-
-				// 2. Draw historical days
-				foreach (var day in historicalLevels)
-				{
-					DrawLevelsForRange(chartControl, chartScale, day.Levels, day.StartBarIndex, day.EndBarIndex, false, day == dayToDrawLabels);
-				}
-
-				// 3. Draw current day
-				if (currentDayLevels != null)
-				{
-					DrawLevelsForRange(chartControl, chartScale, currentDayLevels.Levels, currentDayLevels.StartBarIndex, ChartBars.ToIndex, true, currentDayLevels == dayToDrawLabels);
-				}
+                // Draw current day
+                if (currentDayLevels != null)
+                {
+                    DrawLevelsForRange(chartControl, chartScale, currentDayLevels.Levels, currentDayLevels.StartBarIndex, ChartBars.ToIndex, true);
+                }
 			}
 			else // Manual Mode
 			{
 				// In manual mode, we only draw one set of lines for the selected day
                 if (currentDayLevels != null)
                 {
-				    DrawLevelsForRange(chartControl, chartScale, currentDayLevels.Levels, manualStartBar, manualEndBar, false, true);
+				    DrawLevelsForRange(chartControl, chartScale, currentDayLevels.Levels, manualStartBar, manualEndBar, false);
                 }
+			}
+			// Draw dynamic labels if enabled (but not when using sliding labels)
+			if (ShowDynamicLabels && !IsViewingCurrentDay())
+			{
+				DrawDynamicLabels(chartControl, chartScale);
 			}
 		}
 
-		        private void DrawLevelsForRange(ChartControl chartControl, ChartScale chartScale, Dictionary<string, PriceLevel> levels, int startBarIndex, int endBarIndex, bool extendLine, bool drawLabels)
+		private void DrawLevelsForRange(ChartControl chartControl, ChartScale chartScale, Dictionary<string, PriceLevel> levels, int startBarIndex, int endBarIndex, bool extendLine)
+		{
+			if (levels.Count == 0 || startBarIndex < 0)
+				return;
+
+			// Get white brush for labels
+			if (!dxBrushes.TryGetValue(Brushes.White, out var whiteBrush))
+			{
+				whiteBrush = Brushes.White.ToDxBrush(RenderTarget);
+				dxBrushes[Brushes.White] = whiteBrush;
+			}
+
+			// Calculate line position for drawing the line across the full range
+			float lineStartX = (float)chartControl.GetXByBarIndex(ChartBars, startBarIndex);
+			float lineEndX;
+
+			if (endBarIndex != -1)
+			{
+				// Historical day: line ends at the last bar of the day
+				// Additional check to avoid invalid indices
+				if (endBarIndex < startBarIndex) return;
+				lineEndX = (float)chartControl.GetXByBarIndex(ChartBars, endBarIndex);
+			}
+			else
+			{
+				// Current day: line extends to the right edge of the chart
+				lineEndX = (float)chartControl.CanvasRight;
+			}
+
+			foreach (var level in levels.Values)
+			{
+				if (double.IsNaN(level.Value) || level.Value <= 0) continue;
+
+				float y = chartScale.GetYByValue(level.Value);
+
+				// Ensure we have valid coordinates before drawing
+				if (float.IsNaN(lineStartX) || float.IsNaN(lineEndX)) continue;
+
+				SharpDX.Direct2D1.Brush dxBrush = GetDxBrush(level.LineBrush);
+				if (dxBrush == null) continue;
+
+				// Draw the line across the full range
+				RenderTarget.DrawLine(new SharpDX.Vector2(lineStartX, y), new SharpDX.Vector2(lineEndX, y), dxBrush, Width);
+
+				// Draw labels with sliding logic
+				if (level.LabelLayout != null)
 				{
-					if (levels.Count == 0 || !levels.TryGetValue("Q1", out PriceLevel q1) || double.IsNaN(q1.Value) || startBarIndex < 0 || endBarIndex < startBarIndex)
-						return;
-		
-					// Ensure we are not trying to render bars that don't exist
-					startBarIndex = Math.Max(startBarIndex, 0);
-					endBarIndex = Math.Min(endBarIndex, Bars.Count - 1);
-		
-					// Get X coordinates for the line
-					double startBarX = chartControl.GetXByBarIndex(ChartBars, startBarIndex);
-					float lineStartX = (float)startBarX;
-		
-					double endBarX = chartControl.GetXByBarIndex(ChartBars, endBarIndex);
-					float lineEndX = (float)endBarX;
-		
-					if (extendLine && UseAutomaticDate)
+					// Get sliding label position
+					float labelX = GetSlidingLabelX(lineStartX, lineEndX, chartControl, startBarIndex, endBarIndex);
+
+					// Only draw label if it's visible and not at first bar of day
+					if (ShouldDrawLabel(labelX, chartControl, startBarIndex))
 					{
-						// Extend the line for the current day 15 pixels past its last bar
-						lineEndX += 15;
-					}
-					
-					if (lineEndX <= lineStartX) return;
-		
-					SharpDX.Direct2D1.Brush labelBrush = GetDxBrush(chartControl.Properties.ChartText);
-		
-					float labelX = 0;
-					if(drawLabels)
-					{
-						// The bar index for the label is the last visible bar of THIS day's range
-						int labelBarIndex = Math.Min(endBarIndex, ChartBars.ToIndex);
-						labelBarIndex = Math.Max(labelBarIndex, startBarIndex); // Ensure it's within the day's range
-						
-						// Get the X coordinate and add the buffer
-						labelX = (float)chartControl.GetXByBarIndex(ChartBars, labelBarIndex) + LabelBufferPixels;
-					}
-		
-					foreach (var level in levels.Values)
-					{
-						if (double.IsNaN(level.Value))
-							continue;
-		
-						float y = (float)chartScale.GetYByValue(level.Value);
-						
-						// Draw the line
-						RenderTarget.DrawLine(
-							new SharpDX.Vector2(lineStartX, y),
-							new SharpDX.Vector2(lineEndX, y),
-							GetDxBrush(level.LineBrush),
-							Width
+						RenderTarget.DrawTextLayout(
+							new SharpDX.Vector2(labelX, y - 15),
+							level.LabelLayout,
+							whiteBrush
 						);
-						
-						// Draw the label if requested
-						if (drawLabels && level.LabelLayout != null)
-						{
-							float labelY = y - level.LabelLayout.Metrics.Height / 2;
-							Point textPoint = new Point(labelX, labelY);
-							RenderTarget.DrawTextLayout(textPoint.ToVector2(), level.LabelLayout, labelBrush);
-						}
 					}
 				}
+			}
+		}
+        private void GenerateDailyLevelLabels()
+        {
+            // Generate labels for each day's levels
+            dailyLevelLabels.Clear();
+
+            if (UseAutomaticDate)
+            {
+                // Generate labels for current and historical days
+                foreach (var day in historicalLevels)
+                {
+                    GenerateLabelsForDay(day.Levels);
+                }
+
+                if (currentDayLevels != null)
+                {
+                    GenerateLabelsForDay(currentDayLevels.Levels);
+                }
+            }
+            else
+            {
+                // Generate labels for selected date
+                if (currentDayLevels != null)
+                {
+                    GenerateLabelsForDay(currentDayLevels.Levels, SelectedDate.Date);
+                }
+            }
+        }
+
+        private void GenerateLabelsForDay(Dictionary<string, PriceLevel> levels, DateTime? specificDate = null)
+        {
+            DateTime dayKey = specificDate ?? (UseAutomaticDate ? currentDate : SelectedDate.Date);
+
+            if (!dailyLevelLabels.ContainsKey(dayKey))
+            {
+                dailyLevelLabels[dayKey] = new List<string>();
+            }
+
+            var dayLabels = dailyLevelLabels[dayKey];
+            dayLabels.Clear();
+
+            // Sort levels by value for better display order
+            var sortedLevels = levels.Values
+                .Where(l => !double.IsNaN(l.Value))
+                .OrderByDescending(l => l.Value)
+                .ToList();
+
+            foreach (var level in sortedLevels)
+            {
+                string labelText = !string.IsNullOrEmpty(level.Modifier) && level.Modifier != "Base"
+                    ? $"{level.Name} ({level.Modifier}): {level.Value:F2}"
+                    : $"{level.Name}: {level.Value:F2}";
+
+                dayLabels.Add(labelText);
+            }
+        }
+
+        private void DrawDynamicLabels(ChartControl chartControl, ChartScale chartScale)
+        {
+            // Initialize dynamic text resources if needed
+            InitializeDynamicTextResources();
+
+            if (dynamicTextFormat == null || dynamicTextBrush == null)
+                return;
+
+            int lastVisibleBarIndex = ChartBars.ToIndex;
+            if (lastVisibleBarIndex < 0 || lastVisibleBarIndex >= Bars.Count)
+                return;
+
+            float baseXPosition = chartControl.GetXByBarIndex(ChartBars, lastVisibleBarIndex) + LabelOffsetX;
+
+            DrawDailyLevelLabels(chartControl, chartScale, baseXPosition);
+        }
+
+        private void InitializeDynamicTextResources()
+        {
+            if (dynamicTextFormat == null)
+            {
+                dynamicTextFormat = new SharpDX.DirectWrite.TextFormat(
+                    Core.Globals.DirectWriteFactory,
+                    "Arial", 10);
+            }
+
+            if (dynamicTextBrush == null)
+            {
+                dynamicTextBrush = new SharpDX.Direct2D1.SolidColorBrush(
+                    RenderTarget,
+                    SharpDX.Color.Yellow);
+            }
+        }
+
+        private void DrawDailyLevelLabels(ChartControl chartControl, ChartScale chartScale, float baseXPosition)
+        {
+            int labelIndex = 0;
+
+            foreach (var kvp in dailyLevelLabels)
+            {
+                DateTime labelDate = kvp.Key;
+                List<string> levelLabels = kvp.Value;
+
+                if (levelLabels == null || levelLabels.Count == 0)
+                    continue;
+
+                int firstBarOfDay = FindFirstBarOfDay(labelDate);
+                if (firstBarOfDay == -1) continue;
+
+                double firstBarPrice = Bars.GetClose(firstBarOfDay);
+                float baseYPosition = chartScale.GetYByValue(firstBarPrice);
+
+                // Draw each level label for this day
+                for (int i = 0; i < levelLabels.Count; i++)
+                {
+                    float yPosition = baseYPosition + ((labelIndex + i) * LabelVerticalSpacing);
+
+                    if (IsLabelVisible(chartControl, baseXPosition, yPosition))
+                    {
+                        DrawDynamicLabel(baseXPosition, yPosition, levelLabels[i]);
+                    }
+                }
+
+                labelIndex += levelLabels.Count + 2; // Add extra spacing between days
+            }
+        }
+
+        private int FindFirstBarOfDay(DateTime targetDate)
+        {
+            for (int i = 0; i < Bars.Count; i++)
+            {
+                if (Times[0][i].Date == targetDate.Date)
+                {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        private bool IsLabelVisible(ChartControl chartControl, float x, float y)
+        {
+            return x >= 0 && x <= chartControl.ActualWidth &&
+                   y >= 0 && y <= chartControl.ActualHeight;
+        }
+
+        private void DrawDynamicLabel(float x, float y, string text)
+        {
+            var textRectangle = new SharpDX.RectangleF(x, y, 300, 18);
+
+            RenderTarget.DrawText(
+                text,
+                dynamicTextFormat,
+                textRectangle,
+                dynamicTextBrush);
+        }
+
+        private float GetSlidingLabelX(float lineStartX, float lineEndX, ChartControl chartControl, int startBarIndex, int endBarIndex)
+        {
+            // Get the visible area of the chart
+            float chartLeft = 0;
+            float chartRight = (float)chartControl.CanvasRight;
+
+            // Get the visible portion of the line
+            float visibleStartX = Math.Max(lineStartX, chartLeft);
+            float visibleEndX = Math.Min(lineEndX, chartRight);
+
+            // Calculate label position to follow the visible end of the line
+            float labelX = visibleEndX - 5; // 5 pixels from the visible end of the line
+
+            // Ensure label stays within chart bounds
+            labelX = Math.Max(chartLeft + 5, Math.Min(labelX, chartRight - 100));
+
+            // If visible portion is within bounds, return the calculated position
+            if (visibleStartX <= visibleEndX && visibleStartX <= chartRight)
+            {
+                return labelX;
+            }
+            else
+            {
+                // Line is not visible, don't show label
+                return -1000; // Position off-screen
+            }
+        }
+
+        private bool ShouldDrawLabel(float labelX, ChartControl chartControl, int startBarIndex)
+        {
+            // Don't draw if label is positioned off-screen
+            if (labelX < 0 || labelX > chartControl.CanvasRight)
+                return false;
+
+            // Check if we're at or near the first bar of the day
+            int firstVisibleBar = ChartBars.FromIndex;
+
+            // If we're scrolled back to show the first bar of the day, hide labels
+            if (firstVisibleBar <= startBarIndex + 5) // 5 bar buffer
+                return false;
+
+            // If viewing current day, only show current day labels
+            if (UseAutomaticDate && currentDayLevels != null)
+            {
+                DateTime currentTime = DateTime.Now;
+                if (sessionIterator != null)
+                {
+                    DateTime currentTradingDay = sessionIterator.GetTradingDay(currentTime);
+                    DateTime barTradingDay = sessionIterator.GetTradingDay(Times[0][Math.Min(startBarIndex, Times[0].Count - 1)]);
+
+                    // If viewing current trading day, hide historical labels
+                    if (currentTradingDay == DateTime.Today && barTradingDay != currentTradingDay)
+                        return false;
+                    
+                    // If viewing historical day, hide current day labels
+                    if (currentTradingDay == DateTime.Today && barTradingDay != currentTradingDay && barTradingDay < currentTradingDay)
+                        return false;
+                }
+            }
+
+            return true;
+        }
+
+        private bool IsViewingCurrentDay()
+        {
+            if (!UseAutomaticDate || sessionIterator == null)
+                return false;
+
+            try
+            {
+                DateTime currentTime = DateTime.Now;
+                DateTime currentTradingDay = sessionIterator.GetTradingDay(currentTime);
+                return currentTradingDay == DateTime.Today;
+            }
+            catch
+            {
+                return false;
+            }
+        }
 
         #endregion
 
@@ -863,10 +1101,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         [NinjaScriptProperty]
         [Display(Name = "NR2 Level Type", Description = "Select whether NR2 should use the previous day's close or current day's open.", Order = 3, GroupName = "Parameters")]
-        public NR2LevelType Nr2LevelType 
-        { 
-            get { return nr2LevelType; } 
-            set { nr2LevelType = value; } 
+        public NR2LevelType Nr2LevelType
+        {
+            get { return nr2LevelType; }
+            set { nr2LevelType = value; }
         }
 
         [NinjaScriptProperty]
@@ -893,15 +1131,25 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Range(1, int.MaxValue)]
         [Display(Name = "Line Width", Description = "Width of the level lines", Order = 1, GroupName = "Visuals")]
         public int Width { get; set; }
-        
-        [NinjaScriptProperty]
-        [Range(0, int.MaxValue)]
-        [Display(Name = "Label Buffer (Pixels)", Description = "Pixel buffer from the last bar for label drawing.", Order = 2, GroupName = "Visuals")]
-        public int LabelBufferPixels { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Label Alignment", Description = "Horizontal alignment of the price labels.", Order = 3, GroupName = "Visuals")]
-        public LabelAlignment LabelAlignment { get; set; }
+        [Range(0, int.MaxValue)]
+        [Display(Name = "Line Buffer (Pixels)", Description = "Pixel buffer from the last bar for line drawing.", Order = 2, GroupName = "Visuals")]
+        public int LineBufferPixels { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Show Dynamic Labels", Description = "Show dynamic level labels on the right side of the chart.", Order = 3, GroupName = "Visuals")]
+        public bool ShowDynamicLabels { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(0, 200)]
+        [Display(Name = "Label Offset X", Description = "Distance in pixels from the last bar to the labels.", Order = 4, GroupName = "Visuals")]
+        public int LabelOffsetX { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(10, 50)]
+        [Display(Name = "Label Vertical Spacing", Description = "Pixels between dynamic labels.", Order = 5, GroupName = "Visuals")]
+        public int LabelVerticalSpacing { get; set; }
 
 
         #region Exported Plots
@@ -935,19 +1183,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 {
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
-		private AV6[] cacheAV6;
-		public AV6 AV6(bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int labelBufferPixels, LabelAlignment labelAlignment)
+		private AV1[] cacheAV1;
+		public AV1 AV1(bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels, LabelAlignment labelAlignment)
 		{
-			return AV6(Input, useAutomaticDate, daysToDraw, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, labelBufferPixels, labelAlignment);
+			return AV1(Input, useAutomaticDate, daysToDraw, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels, labelAlignment);
 		}
 
-		public AV6 AV6(ISeries<double> input, bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int labelBufferPixels, LabelAlignment labelAlignment)
+		public AV1 AV1(ISeries<double> input, bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels, LabelAlignment labelAlignment)
 		{
-			if (cacheAV6 != null)
-				for (int idx = 0; idx < cacheAV6.Length; idx++)
-					if (cacheAV6[idx] != null && cacheAV6[idx].UseAutomaticDate == useAutomaticDate && cacheAV6[idx].DaysToDraw == daysToDraw && cacheAV6[idx].Nr2LevelType == nr2LevelType && cacheAV6[idx].UseGapCalculation == useGapCalculation && cacheAV6[idx].SelectedDate == selectedDate && cacheAV6[idx].ManualPrice == manualPrice && cacheAV6[idx].Width == width && cacheAV6[idx].LabelBufferPixels == labelBufferPixels && cacheAV6[idx].LabelAlignment == labelAlignment && cacheAV6[idx].EqualsInput(input))
-						return cacheAV6[idx];
-			return CacheIndicator<AV6>(new AV6(){ UseAutomaticDate = useAutomaticDate, DaysToDraw = daysToDraw, Nr2LevelType = nr2LevelType, UseGapCalculation = useGapCalculation, SelectedDate = selectedDate, ManualPrice = manualPrice, Width = width, LabelBufferPixels = labelBufferPixels, LabelAlignment = labelAlignment }, input, ref cacheAV6);
+			if (cacheAV1 != null)
+				for (int idx = 0; idx < cacheAV1.Length; idx++)
+					if (cacheAV1[idx] != null && cacheAV1[idx].UseAutomaticDate == useAutomaticDate && cacheAV1[idx].DaysToDraw == daysToDraw && cacheAV1[idx].Nr2LevelType == nr2LevelType && cacheAV1[idx].UseGapCalculation == useGapCalculation && cacheAV1[idx].SelectedDate == selectedDate && cacheAV1[idx].ManualPrice == manualPrice && cacheAV1[idx].Width == width && cacheAV1[idx].LineBufferPixels == lineBufferPixels && cacheAV1[idx].LabelAlignment == labelAlignment && cacheAV1[idx].EqualsInput(input))
+						return cacheAV1[idx];
+			return CacheIndicator<AV1>(new AV1(){ UseAutomaticDate = useAutomaticDate, DaysToDraw = daysToDraw, Nr2LevelType = nr2LevelType, UseGapCalculation = useGapCalculation, SelectedDate = selectedDate, ManualPrice = manualPrice, Width = width, LineBufferPixels = lineBufferPixels, LabelAlignment = labelAlignment }, input, ref cacheAV1);
 		}
 	}
 }
@@ -956,14 +1204,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.AV6 AV6(bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int labelBufferPixels, LabelAlignment labelAlignment)
+		public Indicators.AV1 AV1(bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels, LabelAlignment labelAlignment)
 		{
-			return indicator.AV6(Input, useAutomaticDate, daysToDraw, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, labelBufferPixels, labelAlignment);
+			return indicator.AV1(Input, useAutomaticDate, daysToDraw, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels, labelAlignment);
 		}
 
-		public Indicators.AV6 AV6(ISeries<double> input , bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int labelBufferPixels, LabelAlignment labelAlignment)
+		public Indicators.AV1 AV1(ISeries<double> input , bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels, LabelAlignment labelAlignment)
 		{
-			return indicator.AV6(input, useAutomaticDate, daysToDraw, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, labelBufferPixels, labelAlignment);
+			return indicator.AV1(input, useAutomaticDate, daysToDraw, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels, labelAlignment);
 		}
 	}
 }
@@ -972,14 +1220,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.AV6 AV6(bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int labelBufferPixels, LabelAlignment labelAlignment)
+		public Indicators.AV1 AV1(bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels, LabelAlignment labelAlignment)
 		{
-			return indicator.AV6(Input, useAutomaticDate, daysToDraw, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, labelBufferPixels, labelAlignment);
+			return indicator.AV1(Input, useAutomaticDate, daysToDraw, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels, labelAlignment);
 		}
 
-		public Indicators.AV6 AV6(ISeries<double> input , bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int labelBufferPixels, LabelAlignment labelAlignment)
+		public Indicators.AV1 AV1(ISeries<double> input , bool useAutomaticDate, int daysToDraw, NR2LevelType nr2LevelType, bool useGapCalculation, DateTime selectedDate, double manualPrice, int width, int lineBufferPixels, LabelAlignment labelAlignment)
 		{
-			return indicator.AV6(input, useAutomaticDate, daysToDraw, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, labelBufferPixels, labelAlignment);
+			return indicator.AV1(input, useAutomaticDate, daysToDraw, nr2LevelType, useGapCalculation, selectedDate, manualPrice, width, lineBufferPixels, labelAlignment);
 		}
 	}
 }
