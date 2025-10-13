@@ -1,0 +1,737 @@
+#region Using declarations
+using NinjaTrader.Cbi;
+using NinjaTrader.Core.FloatingPoint;
+using NinjaTrader.Data;
+using NinjaTrader.Gui;
+using NinjaTrader.Gui.Chart;
+using NinjaTrader.Gui.SuperDom;
+using NinjaTrader.Gui.Tools;
+using NinjaTrader.NinjaScript;
+using NinjaTrader.NinjaScript.DrawingTools;
+using NinjaTrader.NinjaScript.Indicators;
+using SharpDX.Direct2D1;
+using SharpDX.DirectWrite;
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Xml.Serialization;
+#endregion
+
+namespace NinjaTrader.NinjaScript.Indicators
+{
+    // Enums at namespace level to avoid conflicts
+    public enum AVPLabelAlignment
+    {
+        Left,
+        Center,
+        Right
+    }
+
+    public enum AVPRangeType
+    {
+        OneDay,
+        ThreeDays
+    }
+
+    public class AVP : Indicator
+    {
+
+        #region Variables
+
+        // A class to hold all data related to a single day's levels
+        private class DayLevels
+        {
+            public Dictionary<string, PriceLevel> Levels { get; }
+            public int StartBarIndex { get; set; }
+            public int EndBarIndex { get; set; }
+
+            public DayLevels()
+            {
+                Levels = new Dictionary<string, PriceLevel>();
+                StartBarIndex = -1;
+                EndBarIndex = -1;
+            }
+        }
+
+        // Input Parameters
+        private AVPRangeType rangeType;
+
+        // Session management variables for automatic daily updates
+        private SessionIterator sessionIterator;
+        private DateTime currentDate = Core.Globals.MinDate;
+        private double currentDayHigh;
+        private double currentDayLow;
+        private double currentDayOpen;
+        private double priorDayHigh;
+        private double priorDayLow;
+        private double priorDayOpen;
+
+        // For 3-day calculation - store last 3 days of data
+        private readonly Queue<DayData> threeDayHistory = new Queue<DayData>();
+
+        private class DayData
+        {
+            public DateTime Date { get; set; }
+            public double High { get; set; }
+            public double Low { get; set; }
+            public double Open { get; set; }
+        }
+
+        // Data structures for managing current and historical price levels
+        private DayLevels currentDayLevels;
+        private readonly Queue<DayLevels> historicalLevels = new Queue<DayLevels>();
+
+        // Represents a calculated price level
+        private class PriceLevel : IDisposable
+        {
+            public string Name { get; }
+            public System.Windows.Media.Brush LineBrush { get; }
+            public double Value { get; set; }
+            public TextLayout LabelLayout { get; set; }
+            public string Modifier { get; set; }
+
+            public PriceLevel(string name, System.Windows.Media.Brush brush, string modifier = "")
+            {
+                Name = name ?? throw new ArgumentNullException(nameof(name));
+                LineBrush = brush ?? throw new ArgumentNullException(nameof(brush));
+                Value = double.NaN;
+                Modifier = modifier;
+            }
+
+            public void Dispose()
+            {
+                LabelLayout?.Dispose();
+                LabelLayout = null;
+            }
+        }
+
+        // Cached brushes for performance
+        private readonly Dictionary<System.Windows.Media.Brush, SharpDX.Direct2D1.Brush> dxBrushes = new Dictionary<System.Windows.Media.Brush, SharpDX.Direct2D1.Brush>();
+
+        // Text format for dynamic labels
+        private SharpDX.DirectWrite.TextFormat textFormat;
+
+        // Variables needed for sliding labels
+        private bool needsLayoutUpdate = false;
+
+        // Constants for magic numbers
+        private const float LABEL_MARGIN = 5f;
+        private const float LABEL_MIN_WIDTH = 100f;
+        private const float TOUCH_BUFFER = 10f;
+        private const float CURRENT_DAY_EXTENSION = 30f;
+        private const float LABEL_OFFSET_X = 5f;
+        private const float LABEL_OFFSET_Y = 2f;
+
+        // Thread safety
+        private readonly object lockObject = new object();
+
+        #endregion
+
+        protected override void OnStateChange()
+        {
+            if (State == State.SetDefaults)
+            {
+                Description = "AVP - Advanced Volume/Price Levels with configurable range calculation";
+                Name = "AVP";
+                Calculate = Calculate.OnBarClose;
+                IsOverlay = true;
+                DisplayInDataBox = true;
+                DrawOnPricePanel = true;
+                DrawHorizontalGridLines = true;
+                DrawVerticalGridLines = true;
+                PaintPriceMarkers = true;
+                ScaleJustification = NinjaTrader.Gui.Chart.ScaleJustification.Right;
+                IsSuspendedWhileInactive = true;
+
+                // Default parameter values
+                UseAutomaticDate = true;
+                DaysToDraw = 5;
+                RangeType = AVPRangeType.OneDay;
+                Width = 1;
+                DebugMode = false;
+                ShowExtraLevels = false;
+            }
+            else if (State == State.DataLoaded)
+            {
+                sessionIterator = new SessionIterator(Bars);
+                currentDayLevels = new DayLevels();
+
+                // Initialize text format here
+                textFormat = new SharpDX.DirectWrite.TextFormat(
+                    Core.Globals.DirectWriteFactory,
+                    "Arial", 11);
+            }
+            else if (State == State.Terminated)
+            {
+                // Dispose of all level objects
+                if (currentDayLevels != null)
+                    foreach (var level in currentDayLevels.Levels.Values) level?.Dispose();
+
+                foreach (var day in historicalLevels)
+                    foreach (var level in day.Levels.Values) level?.Dispose();
+
+                ClearAllLevels();
+
+                // Clean up cached brushes
+                foreach (var brush in dxBrushes.Values)
+                    brush?.Dispose();
+                dxBrushes.Clear();
+
+                // Clean up text format
+                textFormat?.Dispose();
+                textFormat = null;
+            }
+        }
+
+        protected override void OnBarUpdate()
+        {
+            if (BarsInProgress != 0) return;
+            if (CurrentBar < 1) return;
+
+            DateTime barTime = Times[0][0];
+            DateTime tradingDay = sessionIterator.GetTradingDay(barTime);
+
+            if (UseAutomaticDate)
+            {
+                if (tradingDay != currentDate)
+                {
+                    if (currentDate != Core.Globals.MinDate)
+                    {
+                        FinalizeCurrentDay();
+                    }
+
+                    StartNewTradingDay(tradingDay);
+                }
+
+                UpdateDayHighLowOpen();
+            }
+        }
+
+        private void StartNewTradingDay(DateTime tradingDay)
+        {
+            currentDate = tradingDay;
+
+            // Add previous day to 3-day history if it has valid data
+            if (currentDayHigh > 0 && currentDayLow > 0)
+            {
+                lock (lockObject)
+                {
+                    threeDayHistory.Enqueue(new DayData
+                    {
+                        Date = currentDate.AddDays(-1),
+                        High = currentDayHigh,
+                        Low = currentDayLow,
+                        Open = currentDayOpen
+                    });
+
+                    // Keep only last 3 days
+                    while (threeDayHistory.Count > 3)
+                    {
+                        threeDayHistory.Dequeue();
+                    }
+                }
+            }
+
+            priorDayHigh = currentDayHigh;
+            priorDayLow = currentDayLow;
+            priorDayOpen = currentDayOpen;
+
+            currentDayHigh = High[0];
+            currentDayLow = Low[0];
+            currentDayOpen = Open[0];
+
+            currentDayLevels = new DayLevels
+            {
+                StartBarIndex = CurrentBar
+            };
+
+            // Calculate levels based on selected range type
+            if (CanCalculateLevels())
+            {
+                CalculateAndCreateLevels(currentDayLevels);
+            }
+        }
+
+        private bool CanCalculateLevels()
+        {
+            if (RangeType == AVPRangeType.OneDay)
+            {
+                return priorDayHigh > 0 && priorDayLow > 0;
+            }
+            else // ThreeDays
+            {
+                return threeDayHistory.Count >= 3;
+            }
+        }
+
+        private void UpdateDayHighLowOpen()
+        {
+            if (currentDayHigh == 0 || High[0] > currentDayHigh) currentDayHigh = High[0];
+            if (currentDayLow == 0 || Low[0] < currentDayLow) currentDayLow = Low[0];
+        }
+
+        private void FinalizeCurrentDay()
+        {
+            if (currentDayLevels != null)
+            {
+                lock (lockObject)
+                {
+                    currentDayLevels.EndBarIndex = CurrentBar - 1;
+                    historicalLevels.Enqueue(currentDayLevels);
+
+                    while (historicalLevels.Count > DaysToDraw)
+                    {
+                        var oldDay = historicalLevels.Dequeue();
+                        oldDay.Levels.Clear();
+                    }
+                }
+            }
+        }
+
+        private void CalculateAndCreateLevels(DayLevels dayLevels)
+        {
+            // Clear existing levels
+            dayLevels.Levels.Clear();
+
+            double q1, q4, dayRange;
+            string rangeDescription;
+
+            if (RangeType == AVPRangeType.OneDay)
+            {
+                // Use previous day's high and low
+                q1 = priorDayHigh;  // "Máximo día anterior"
+                q4 = priorDayLow;   // "Mínimo día anterior"
+                dayRange = q1 - q4;
+                rangeDescription = "1 día anterior";
+            }
+            else // ThreeDays
+            {
+                // Calculate 3-day range using stored history
+                if (threeDayHistory.Count >= 3)
+                {
+                    q1 = threeDayHistory.Max(d => d.High);  // Máximo de 3 días
+                    q4 = threeDayHistory.Min(d => d.Low);   // Mínimo de 3 días
+                    dayRange = q1 - q4;
+                    rangeDescription = "3 días anteriores";
+
+                    // Add PDH and PDL levels (Prior Day High/Low from most recent day)
+                    // Only add if they are different from Q1 and Q4
+                    lock (lockObject)
+                    {
+                        if (threeDayHistory.Count >= 3)
+                        {
+                            // Get the most recent day (last element in queue)
+                            DayData mostRecentDay = threeDayHistory.Last();
+                            double pdh = mostRecentDay.High;
+                            double pdl = mostRecentDay.Low;
+
+                            // Only add PDH if it's different from Q1
+                            if (Math.Abs(pdh - q1) > double.Epsilon)
+                            {
+                                AddLevel(dayLevels.Levels, "PDH", pdh, Brushes.Yellow);
+                            }
+
+                            // Only add PDL if it's different from Q4
+                            if (Math.Abs(pdl - q4) > double.Epsilon)
+                            {
+                                AddLevel(dayLevels.Levels, "PDL", pdl, Brushes.Yellow);
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // Fallback to 1-day if not enough history
+                    q1 = priorDayHigh;
+                    q4 = priorDayLow;
+                    dayRange = q1 - q4;
+                    rangeDescription = "1 día anterior (insuficiente historial para 3 días)";
+                }
+            }
+
+            // Validate range to avoid division by zero
+            if (dayRange <= 0) return;
+
+            // NR2 (base) = Q1 - (Rango/2) - always calculated this way
+            double nr2 = q1 - (dayRange / 2);
+
+            Print($"AVP Calculations - Date: {currentDate:yyyy-MM-dd}");
+            Print($"Modo: {rangeDescription}");
+            Print($"Q1 (Máximo): {q1:F2}");
+            Print($"Q4 (Mínimo): {q4:F2}");
+            Print($"Rango: {dayRange:F4}");
+            Print($"NR2 (Q1 - Rango/2): {nr2:F2}");
+            Print("--- Niveles Calculados ---");
+
+            // Calculate all levels based on AVP.md specifications
+            CalculateAllLevels(dayRange, q1, q4, nr2, dayLevels.Levels);
+            needsLayoutUpdate = true;
+        }
+
+        private void CalculateAllLevels(double dayRange, double q1, double q4, double nr2, Dictionary<string, PriceLevel> levels)
+        {
+            // Main levels from Q1 (downward)
+            AddLevel(levels, "Q1", q1, Brushes.Yellow);
+            AddLevel(levels, "TC", q1 - (dayRange * 0.0625), Brushes.ForestGreen);
+            AddLevel(levels, "ZSell", q1 - (dayRange * 0.125), Brushes.Green);
+            AddLevel(levels, "NR1", q1 - (dayRange * 0.159), Brushes.DarkOrchid);
+            AddLevel(levels, "Q2", q1 - (dayRange * 0.25), Brushes.Plum);
+            AddLevel(levels, "M+", q1 - (dayRange * 0.375), Brushes.ForestGreen);
+
+            // NR2 (Base level)
+            AddLevel(levels, "NR2", nr2, Brushes.Orange);
+
+            // Main levels from Q4 (upward)
+            AddLevel(levels, "M-", q4 + (dayRange * 0.375), Brushes.ForestGreen);
+            AddLevel(levels, "Q3", q4 + (dayRange * 0.25), Brushes.Plum);
+            AddLevel(levels, "ZBuy", q4 + (dayRange * 0.125), Brushes.IndianRed);
+            AddLevel(levels, "TV", q4 + (dayRange * 0.0625), Brushes.IndianRed);
+            AddLevel(levels, "NR3", q4 + (dayRange * 0.159), Brushes.DarkOrchid);
+            AddLevel(levels, "Q4", q4, Brushes.Yellow);
+
+            // Extension levels upward from Q1
+            AddLevel(levels, "Std1+", q1 + (dayRange * 0.0855), Brushes.ForestGreen);
+            AddLevel(levels, "Std2+", q1 + (dayRange * 0.125), Brushes.ForestGreen);
+            AddLevel(levels, "Std3+", q1 + (dayRange * 0.171), Brushes.ForestGreen);
+            AddLevel(levels, "Std4+", q1 + (dayRange * 0.25), Brushes.ForestGreen);
+            AddLevel(levels, "Std5+", q1 + (dayRange * 0.342), Brushes.ForestGreen);
+            AddLevel(levels, "R+", q1 + (dayRange * 0.5), Brushes.Gold);
+
+            // Extra extension levels upward from Q1
+            AddLevel(levels, "R+1", q1 + (dayRange * 0.625), Brushes.Gold);
+            AddLevel(levels, "R+2", q1 + (dayRange * 0.75), Brushes.Gold);
+            AddLevel(levels, "R+3", q1 + (dayRange * 0.875), Brushes.Gold);
+
+            // Extension levels downward from Q4
+            AddLevel(levels, "Std1-", q4 - (dayRange * 0.0855), Brushes.IndianRed);
+            AddLevel(levels, "Std2-", q4 - (dayRange * 0.125), Brushes.IndianRed);
+            AddLevel(levels, "Std3-", q4 - (dayRange * 0.171), Brushes.IndianRed);
+            AddLevel(levels, "Std4-", q4 - (dayRange * 0.25), Brushes.IndianRed);
+            AddLevel(levels, "Std5-", q4 - (dayRange * 0.342), Brushes.IndianRed);
+            AddLevel(levels, "R-", q4 - (dayRange * 0.50), Brushes.Gold);
+
+            // Extra extension levels downward from Q4
+            AddLevel(levels, "R-1", q4 - (dayRange * 0.625), Brushes.Gold);
+            AddLevel(levels, "R-2", q4 - (dayRange * 0.75), Brushes.Gold);
+            AddLevel(levels, "R-3", q4 - (dayRange * 0.875), Brushes.Gold);
+        }
+
+        private void AddLevel(Dictionary<string, PriceLevel> levels, string name, double value, System.Windows.Media.Brush brush, string modifier = "")
+        {
+            if (!double.IsNaN(value) && !double.IsInfinity(value))
+            {
+                levels[name] = new PriceLevel(name, brush, modifier)
+                {
+                    Value = value
+                };
+
+                Print($"{name}: {value:F2} {modifier}");
+            }
+        }
+
+        private double RoundToQuarterPoint(double value)
+        {
+            // Redondea al cuarto de punto siguiente (.00, .25, .50, .75)
+            return Math.Ceiling(value * 4) / 4;
+        }
+
+        private void UpdateAllTextLayouts()
+        {
+            if (currentDayLevels != null)
+                UpdateTextLayouts(currentDayLevels.Levels);
+            foreach (var day in historicalLevels)
+                UpdateTextLayouts(day.Levels);
+        }
+
+        private void UpdateTextLayouts(Dictionary<string, PriceLevel> levels)
+        {
+            // Verificación temprana para evitar procesamiento innecesario
+            if (ChartControl == null) return;
+
+            // Usar 'using' para asegurar la liberación correcta de recursos
+            using (TextFormat textFormat = ChartControl.Properties.LabelFont.ToDirectWriteTextFormat())
+            {
+                foreach (var level in levels.Values)
+                {
+                    // Liberar el layout anterior si existe
+                    level.LabelLayout?.Dispose();
+
+                    // Saltar niveles sin valor válido
+                    if (double.IsNaN(level.Value))
+                    {
+                        level.LabelLayout = null;
+                        continue;
+                    }
+
+                    // Crear nueva etiqueta con el valor redondeado al cuarto de punto
+                    double roundedValue = RoundToQuarterPoint(level.Value);
+                    string labelText;
+                    if (!string.IsNullOrEmpty(level.Modifier))
+                        labelText = $"{level.Name} ({level.Modifier}) {roundedValue:F2}";
+                    else
+                        labelText = $"{level.Name} {roundedValue:F2}";
+
+                    level.LabelLayout = new TextLayout(Core.Globals.DirectWriteFactory, labelText, textFormat, ChartPanel?.W ?? 0, textFormat.FontSize);
+                }
+            }
+        }
+
+        private float GetSlidingLabelX(float lineStartX, float lineEndX, ChartControl chartControl, int startBarIndex, int endBarIndex)
+        {
+            // Get the visible area of the chart
+            float chartLeft = 0;
+            float chartRight = (float)chartControl.CanvasRight;
+
+            // Get the visible portion of the line
+            float visibleStartX = Math.Max(lineStartX, chartLeft);
+            float visibleEndX = Math.Min(lineEndX, chartRight);
+
+            // Calculate label position to follow the visible end of the line
+            float labelX = visibleEndX - LABEL_MARGIN;
+
+            // Ensure label stays within chart bounds
+            labelX = Math.Max(chartLeft + LABEL_MARGIN, Math.Min(labelX, chartRight - LABEL_MIN_WIDTH));
+
+            // If visible portion is within bounds, return the calculated position
+            if (visibleStartX <= visibleEndX && visibleStartX <= chartRight)
+            {
+                return labelX;
+            }
+            else
+            {
+                // Line is not visible, don't show label
+                return -1000; // Position off-screen
+            }
+        }
+
+        private bool ShouldDrawLabel(float labelX, ChartControl chartControl, int startBarIndex)
+        {
+            // Don't draw if label is positioned off-screen
+            if (labelX < 0 || labelX > chartControl.CanvasRight)
+                return false;
+
+            // Calculate the X position of the first bar of the day
+            float firstBarOfDayX = (float)chartControl.GetXByBarIndex(ChartBars, startBarIndex);
+
+            // Only hide label when it physically reaches the first bar position
+            if (labelX <= firstBarOfDayX + TOUCH_BUFFER)
+                return false;
+
+            // Show labels for all other valid positions
+            return true;
+        }
+
+        private void ClearAllLevels()
+        {
+            // Clear current day levels
+            currentDayLevels?.Levels?.Clear();
+
+            // Clear historical levels
+            while (historicalLevels.Count > 0)
+            {
+                var day = historicalLevels.Dequeue();
+                day.Levels.Clear();
+            }
+        }
+
+        protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
+        {
+            if (Bars == null || ChartControl == null) return;
+
+            if (needsLayoutUpdate)
+            {
+                UpdateAllTextLayouts();
+                needsLayoutUpdate = false;
+            }
+
+            lock (lockObject)
+            {
+                // Draw historical levels
+                foreach (var day in historicalLevels)
+                {
+                    DrawLevelsForRange(chartControl, chartScale, day.Levels, day.StartBarIndex, day.EndBarIndex, false);
+                }
+
+                // Draw current day levels
+                if (currentDayLevels?.Levels?.Count > 0)
+                {
+                    DrawLevelsForRange(chartControl, chartScale, currentDayLevels.Levels, currentDayLevels.StartBarIndex, -1, true);
+                }
+            }
+        }
+
+        private void DrawLevelsForRange(ChartControl chartControl, ChartScale chartScale, Dictionary<string, PriceLevel> levels, int startBarIndex, int endBarIndex, bool isCurrentDay)
+        {
+            if (levels.Count == 0 || startBarIndex < 0)
+                return;
+
+            // Get white brush for labels
+            var whiteBrush = GetDxBrush(Brushes.White);
+
+            // Calculate line position for drawing the line across the full range
+            float lineStartX = (float)chartControl.GetXByBarIndex(ChartBars, startBarIndex);
+            float lineEndX;
+
+            if (endBarIndex != -1)
+            {
+                // Historical day: line ends at the last bar of the day
+                // Additional check to avoid invalid indices
+                if (endBarIndex < startBarIndex) return;
+                lineEndX = (float)chartControl.GetXByBarIndex(ChartBars, endBarIndex);
+            }
+            else
+            {
+                // Current day: line extends beyond the last bar
+                int lastBarIndex = ChartBars.ToIndex;
+                float lastBarX = (float)chartControl.GetXByBarIndex(ChartBars, lastBarIndex);
+                lineEndX = lastBarX + CURRENT_DAY_EXTENSION;
+            }
+
+            foreach (var level in levels.Values)
+            {
+                if (double.IsNaN(level.Value) || level.Value <= 0) continue;
+
+                // Skip extra levels if ShowExtraLevels is false
+                if (!ShowExtraLevels && (level.Name == "R+1" || level.Name == "R+2" || level.Name == "R+3" ||
+                                         level.Name == "R-1" || level.Name == "R-2" || level.Name == "R-3"))
+                    continue;
+
+                float y = (float)chartScale.GetYByValue(level.Value);
+
+                // Ensure we have valid coordinates before drawing
+                if (float.IsNaN(lineStartX) || float.IsNaN(lineEndX)) continue;
+
+                SharpDX.Direct2D1.Brush dxBrush = GetDxBrush(level.LineBrush);
+                if (dxBrush == null) continue;
+
+                // Draw the line across the full range
+                RenderTarget.DrawLine(new SharpDX.Vector2(lineStartX, y), new SharpDX.Vector2(lineEndX, y), dxBrush, Width);
+
+                // Draw labels with sliding logic
+                if (level.LabelLayout != null)
+                {
+                    // Get sliding label position
+                    float labelX = GetSlidingLabelX(lineStartX, lineEndX + LABEL_MARGIN, chartControl, startBarIndex, endBarIndex);
+
+                    // Only draw label if it's visible and not at first bar of day
+                    if (ShouldDrawLabel(labelX, chartControl, startBarIndex))
+                    {
+                        RenderTarget.DrawTextLayout(
+                            new SharpDX.Vector2(labelX + LABEL_OFFSET_X, y + LABEL_OFFSET_Y),
+                            level.LabelLayout,
+                            whiteBrush
+                        );
+                    }
+                }
+            }
+        }
+
+        private SharpDX.Direct2D1.Brush GetDxBrush(System.Windows.Media.Brush wpfBrush)
+        {
+            if (dxBrushes.TryGetValue(wpfBrush, out SharpDX.Direct2D1.Brush dxBrush))
+                return dxBrush;
+
+            dxBrush = wpfBrush.ToDxBrush(RenderTarget);
+            dxBrushes.Add(wpfBrush, dxBrush);
+            return dxBrush;
+        }
+
+        #region Properties
+
+        [NinjaScriptProperty]
+        [Display(Name = "Use Automatic Date", Description = "Use automatic date or manual date selection", Order = 1, GroupName = "Parameters")]
+        public bool UseAutomaticDate { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(1, int.MaxValue)]
+        [Display(Name = "Days to Draw", Description = "Number of historical days to draw", Order = 2, GroupName = "Parameters")]
+        public int DaysToDraw { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Range Type", Description = "Use 1 day or 3 days for range calculation", Order = 3, GroupName = "Parameters")]
+        public AVPRangeType RangeType
+        {
+            get { return rangeType; }
+            set { rangeType = value; }
+        }
+
+        [NinjaScriptProperty]
+        [Range(1, int.MaxValue)]
+        [Display(Name = "Line Width", Description = "Width of the level lines", Order = 4, GroupName = "Visual")]
+        public int Width { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Show Extra Levels", Description = "Show additional R+ and R- extension levels", Order = 5, GroupName = "Visual")]
+        public bool ShowExtraLevels { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Debug Mode", Description = "Enable debug print statements", Order = 6, GroupName = "Debug")]
+        public bool DebugMode { get; set; }
+
+        #endregion
+    }
+}
+
+#region NinjaScript generated code. Neither change nor remove.
+
+namespace NinjaTrader.NinjaScript.Indicators
+{
+    public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
+    {
+        private AVP[] cacheAVP;
+        public AVP AVP(bool useAutomaticDate, int daysToDraw, AVPRangeType rangeType, int width, bool showExtraLevels, bool debugMode)
+        {
+            return AVP(Input, useAutomaticDate, daysToDraw, rangeType, width, showExtraLevels, debugMode);
+        }
+
+        public AVP AVP(ISeries<double> input, bool useAutomaticDate, int daysToDraw, AVPRangeType rangeType, int width, bool showExtraLevels, bool debugMode)
+        {
+            if (cacheAVP != null)
+                for (int idx = 0; idx < cacheAVP.Length; idx++)
+                    if (cacheAVP[idx] != null && cacheAVP[idx].UseAutomaticDate == useAutomaticDate && cacheAVP[idx].DaysToDraw == daysToDraw && cacheAVP[idx].RangeType == rangeType && cacheAVP[idx].Width == width && cacheAVP[idx].ShowExtraLevels == showExtraLevels && cacheAVP[idx].DebugMode == debugMode && cacheAVP[idx].EqualsInput(input))
+                        return cacheAVP[idx];
+            return CacheIndicator<AVP>(new AVP() { UseAutomaticDate = useAutomaticDate, DaysToDraw = daysToDraw, RangeType = rangeType, Width = width, ShowExtraLevels = showExtraLevels, DebugMode = debugMode }, input, ref cacheAVP);
+        }
+    }
+}
+
+namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
+{
+    public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
+    {
+        public Indicators.AVP AVP(bool useAutomaticDate, int daysToDraw, AVPRangeType rangeType, int width, bool showExtraLevels, bool debugMode)
+        {
+            return indicator.AVP(Input, useAutomaticDate, daysToDraw, rangeType, width, showExtraLevels, debugMode);
+        }
+
+        public Indicators.AVP AVP(ISeries<double> input, bool useAutomaticDate, int daysToDraw, AVPRangeType rangeType, int width, bool showExtraLevels, bool debugMode)
+        {
+            return indicator.AVP(input, useAutomaticDate, daysToDraw, rangeType, width, showExtraLevels, debugMode);
+        }
+    }
+}
+
+namespace NinjaTrader.NinjaScript.Strategies
+{
+    public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
+    {
+        public Indicators.AVP AVP(bool useAutomaticDate, int daysToDraw, AVPRangeType rangeType, int width, bool showExtraLevels, bool debugMode)
+        {
+            return indicator.AVP(Input, useAutomaticDate, daysToDraw, rangeType, width, showExtraLevels, debugMode);
+        }
+
+        public Indicators.AVP AVP(ISeries<double> input, bool useAutomaticDate, int daysToDraw, AVPRangeType rangeType, int width, bool showExtraLevels, bool debugMode)
+        {
+            return indicator.AVP(input, useAutomaticDate, daysToDraw, rangeType, width, showExtraLevels, debugMode);
+        }
+    }
+}
+
+#endregion
