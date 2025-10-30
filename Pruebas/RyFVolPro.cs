@@ -298,12 +298,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (Bars == null || ChartControl == null || CurrentBar < 1 || Core.Globals.DirectWriteFactory == null || RenderTarget == null)
                 return;
 
-            RenderVolumeLabel(chartControl, chartScale);
-
-            if (showCumulatedRatio && CumulatedRatio.IsValidDataPoint(0))
+            if (showCumulatedRatio && CumulatedRatio.IsValidDataPoint(0) && Bars.IsLastBarOfSession)
             {
                 RenderCumulatedRatioLabel(chartControl, chartScale);
             }
+
+            RenderVolumeLabel(chartControl, chartScale);
         }
 
         private void RenderCumulatedRatioLabel(ChartControl chartControl, ChartScale chartScale)
@@ -312,13 +312,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             double lastValue = CumulatedRatio[0];
             string labelText = $"{lastValue:F0}%";
 
-            Brush highRatioBrushOpaque = highRatioBrush.Clone();
-            highRatioBrushOpaque.Opacity = (float)textBoxOpacity / 100.0;
-            highRatioBrushOpaque.Freeze();
-
-            Brush lowRatioBrushOpaque = lowRatioBrush.Clone();
-            lowRatioBrushOpaque.Opacity = (float)textBoxOpacity / 100.0;
-            lowRatioBrushOpaque.Freeze();
+            Brush background = textBoxBrush.Clone();
+            background.Opacity = (float)textBoxOpacity / 100.0;
+            background.Freeze();
 
             using (var textFormat = new SharpDX.DirectWrite.TextFormat(Core.Globals.DirectWriteFactory, "Arial", SharpDX.DirectWrite.FontWeight.Bold, SharpDX.DirectWrite.FontStyle.Normal, (float)labelFontSize))
             {
@@ -329,7 +325,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                     SharpDX.RectangleF rect = new SharpDX.RectangleF((float)x, (float)y, textLayout.Metrics.Width, textLayout.Metrics.Height);
 
-                    using (var backgroundBrush = (lastValue > 100 ? highRatioBrushOpaque : lowRatioBrushOpaque).ToDxBrush(RenderTarget))
+                    using (var backgroundBrush = background.ToDxBrush(RenderTarget))
                     using (var textDXBrush = textBrush.ToDxBrush(RenderTarget))
                     {
                         RenderTarget.FillRectangle(rect, backgroundBrush);
@@ -344,8 +340,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             double lastBarX = chartControl.GetXByBarIndex(ChartBars, ChartBars.ToIndex);
             double labelX = lastBarX + 25;
 
-            double yMid = (chartScale.MaxValue + chartScale.MinValue) / 2;
-            double labelY = chartScale.GetYByValue(yMid);
+            double labelY = ChartPanel.Y + ChartPanel.H - (labelFontSize + 10);
 
             string labelText = lastAccumulationDistribution.ToString("F0");
             SharpDX.Color labelColor = lastAccumulationDistribution > 0 ? SharpDX.Color.ForestGreen : SharpDX.Color.IndianRed;
