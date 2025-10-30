@@ -123,7 +123,8 @@ namespace NinjaTrader.NinjaScript.Indicators
     {
         VolumeCalculationResult CalculateEffectiveVolume(double currentClose, double previousClose,
                                                        double currentHigh, double currentLow, double volume);
-        VolumeComparisonResult CompareWithPreviousDay(VolumeData current, IEnumerable<VolumeData> historicalData);
+        VolumeComparisonResult CompareWithPreviousDay(VolumeData current, IEnumerable<VolumeData> historicalData,
+                                                    double highThreshold, double mediumThreshold);
     }
 
     /// <summary>
@@ -133,19 +134,13 @@ namespace NinjaTrader.NinjaScript.Indicators
     {
         void AddVolumeData(VolumeData data);
         VolumeData GetVolumeAt(DateTime timestamp);
+        IEnumerable<VolumeData> GetAllVolumeData(); // Refactor: Add method to get all data
         VolumeData GetClosestVolume(DateTime targetTime, TimeSpan tolerance);
         void CleanupOldData();
         int GetCount();
         void Clear();
     }
 
-    /// <summary>
-    /// Interface for volume coloring strategies
-    /// </summary>
-    public interface IVolumeColorStrategy
-    {
-        System.Windows.Media.Brush GetVolumeBrush(VolumeComparisonResult comparison, double currentVolume, double emaValue, bool hasEma);
-    }
     #endregion
 
     #region Services
@@ -203,7 +198,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
-        public VolumeComparisonResult CompareWithPreviousDay(VolumeData current, IEnumerable<VolumeData> historicalData)
+        public VolumeComparisonResult CompareWithPreviousDay(VolumeData current, IEnumerable<VolumeData> historicalData,
+                                                           double highThreshold, double mediumThreshold)
         {
             if (current == null)
                 return new VolumeComparisonResult { Category = VolumeCategory.NoData };
@@ -213,28 +209,21 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             if (historicalData != null)
             {
-                // Try exact match first
-                var previousData = historicalData.FirstOrDefault(d => d.Timestamp.Date == previousDayTime.Date);
-                if (previousData != null)
-                {
-                    previousVolume = previousData.Volume;
-                }
-                else
-                {
-                    // Search for closest bar within tolerance
-                    var closestData = historicalData
-                        .Where(d => d.Timestamp.Date == previousDayTime.Date &&
-                                    Math.Abs((d.Timestamp - previousDayTime).TotalMinutes) <= VolumeConstants.TIME_MATCH_TOLERANCE_MINUTES)
-                        .OrderBy(d => Math.Abs((d.Timestamp - previousDayTime).TotalMinutes))
-                        .FirstOrDefault();
+                // Search for the closest bar in the previous day that matches the current bar's time
+                var closestData = historicalData
+                    .Where(d => d.Timestamp.Date == previousDayTime.Date &&
+                                Math.Abs((d.Timestamp.TimeOfDay - current.Timestamp.TimeOfDay).TotalMinutes) <= VolumeConstants.TIME_MATCH_TOLERANCE_MINUTES)
+                    .OrderBy(d => Math.Abs((d.Timestamp.TimeOfDay - current.Timestamp.TimeOfDay).TotalMinutes))
+                    .FirstOrDefault();
 
-                    if (closestData != null)
-                        previousVolume = closestData.Volume;
+                if (closestData != null)
+                {
+                    previousVolume = closestData.Volume;
                 }
             }
 
             double volumeRatio = previousVolume > 0 ? current.Volume / previousVolume : 1.0;
-            VolumeCategory category = ClassifyVolumeCategory(volumeRatio);
+            VolumeCategory category = ClassifyVolumeCategory(volumeRatio, highThreshold, mediumThreshold);
 
             return new VolumeComparisonResult
             {
@@ -246,11 +235,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             };
         }
 
-        private VolumeCategory ClassifyVolumeCategory(double volumeRatio)
+        private VolumeCategory ClassifyVolumeCategory(double volumeRatio, double highThreshold, double mediumThreshold)
         {
-            if (volumeRatio >= 3.0)
+            if (volumeRatio >= highThreshold)
                 return VolumeCategory.VeryHigh;
-            else if (volumeRatio >= 2.0)
+            else if (volumeRatio >= mediumThreshold)
                 return VolumeCategory.High;
             else if (volumeRatio >= 1.0)
                 return VolumeCategory.Medium;
@@ -282,6 +271,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             lock (_lockObject)
             {
                 return _volumeData.TryGetValue(timestamp, out VolumeData data) ? data : null;
+            }
+        }
+
+        public IEnumerable<VolumeData> GetAllVolumeData()
+        {
+            lock (_lockObject)
+            {
+                return _volumeData.Values.ToList();
             }
         }
 
@@ -342,42 +339,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
     }
 
-    /// <summary>
-    /// Default implementation of volume coloring strategy
-    /// </summary>
-    public class DefaultVolumeColorStrategy : IVolumeColorStrategy
-    {
-        private readonly double _highThreshold;
-        private readonly double _mediumThreshold;
-
-        public DefaultVolumeColorStrategy(double highThreshold = VolumeConstants.DEFAULT_HIGH_VOLUME_THRESHOLD,
-                                         double mediumThreshold = VolumeConstants.DEFAULT_MEDIUM_VOLUME_THRESHOLD)
-        {
-            _highThreshold = highThreshold;
-            _mediumThreshold = mediumThreshold;
-        }
-
-        public System.Windows.Media.Brush GetVolumeBrush(VolumeComparisonResult comparison, double currentVolume,
-                                                             double emaValue, bool hasEma)
-        {
-            // Priority to previous day comparison, then EMA
-            switch (comparison.Category)
-            {
-                case VolumeCategory.VeryHigh:
-                    return System.Windows.Media.Brushes.Orange;
-                case VolumeCategory.High:
-                    return System.Windows.Media.Brushes.White;
-                case VolumeCategory.Medium:
-                    return hasEma && currentVolume >= emaValue ?
-                           System.Windows.Media.Brushes.DodgerBlue : System.Windows.Media.Brushes.DimGray;
-                default:
-                    return System.Windows.Media.Brushes.DimGray;
-            }
-        }
-
-        public double GetHighThreshold() => _highThreshold;
-        public double GetMediumThreshold() => _mediumThreshold;
-    }
     #endregion
 
     public class RyFVol : Indicator
@@ -393,7 +354,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         // Core services
         private readonly IVolumeCalculator volumeCalculator;
         private readonly IHistoricalVolumeManager historicalVolumeManager;
-        private IVolumeColorStrategy colorStrategy;
 
         // Configuration
         private int totalVolumeOpacity;
@@ -404,6 +364,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         // EMA indicator
         private EMA emaIndicator;
+
+        // Backing fields for volume thresholds to prevent recursion
+        private double highVolumeThreshold;
+        private double mediumVolumeThreshold;
         #endregion
 
         public RyFVol()
@@ -411,7 +375,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             // Initialize services
             volumeCalculator = new VolumeCalculatorService();
             historicalVolumeManager = new HistoricalVolumeManager();
-            colorStrategy = new DefaultVolumeColorStrategy();
         }
 
         protected override void OnStateChange()
@@ -453,6 +416,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             threshold = DEFAULT_THRESHOLD;
             labelFontSize = DEFAULT_LABEL_FONT_SIZE;
             emaPeriod = DEFAULT_EMA_PERIOD;
+            highVolumeThreshold = VolumeConstants.DEFAULT_HIGH_VOLUME_THRESHOLD;
+            mediumVolumeThreshold = VolumeConstants.DEFAULT_MEDIUM_VOLUME_THRESHOLD;
 
             // Add plots
             AddPlot(new Stroke(Brushes.CornflowerBlue, 8), PlotStyle.Bar, "TotalVolume");
@@ -553,16 +518,32 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             // Get historical comparison
             var currentVolumeData = new VolumeData(Time[0], volumeResult.Volume, volumeResult.EffectiveVolume, volumeResult.AccumulationDistribution);
-            var historicalData = historicalVolumeManager.GetCount() > 0 ?
-                                Enumerable.Repeat(currentVolumeData, 1) : Enumerable.Empty<VolumeData>();
 
-            var comparison = volumeCalculator.CompareWithPreviousDay(currentVolumeData, historicalData);
+            // Refactor: Get all historical data at once for better performance
+            var historicalData = historicalVolumeManager.GetAllVolumeData();
+
+            var comparison = volumeCalculator.CompareWithPreviousDay(currentVolumeData, historicalData, highVolumeThreshold, mediumVolumeThreshold);
 
             // Apply color to total volume bar
             double emaValue = CurrentBar >= emaPeriod ? emaIndicator[0] : 0;
             bool hasEma = CurrentBar >= emaPeriod;
-            var volumeBrush = colorStrategy.GetVolumeBrush(comparison, volumeResult.Volume, emaValue, hasEma);
-            PlotBrushes[0][0] = volumeBrush;
+
+            // Directly apply coloring logic based on comparison
+            switch (comparison.Category)
+            {
+                case VolumeCategory.VeryHigh:
+                    PlotBrushes[0][0] = Brushes.Orange;
+                    break;
+                case VolumeCategory.High:
+                    PlotBrushes[0][0] = Brushes.White;
+                    break;
+                case VolumeCategory.Medium:
+                    PlotBrushes[0][0] = hasEma && volumeResult.Volume >= emaValue ? Brushes.DodgerBlue : Brushes.DimGray;
+                    break;
+                default:
+                    PlotBrushes[0][0] = Brushes.DimGray;
+                    break;
+            }
 
             // Plot 1: Effective Volume with threshold filter
             ApplyEffectiveVolumeColoring(volumeResult);
@@ -572,25 +553,27 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             double volumeThreshold = volumeResult.Volume * threshold;
 
+            // Always plot effective volume to avoid empty bars
+            Values[1][0] = volumeResult.EffectiveVolume;
+
             if (Math.Abs(volumeResult.AccumulationDistribution) > volumeThreshold)
             {
-                Values[1][0] = volumeResult.EffectiveVolume;
-
-                // Color based on accumulation/distribution
+                // If effective volume is significant, color it by direction
                 if (volumeResult.AccumulationDistribution > 0)
                 {
-                    // Accumulation (buying) - ForestGreen
+                    // Accumulation (buying) - Green
                     PlotBrushes[1][0] = Brushes.ForestGreen;
                 }
                 else
                 {
-                    // Distribution (selling) - IndianRed
+                    // Distribution (selling) - Red
                     PlotBrushes[1][0] = Brushes.IndianRed;
                 }
             }
             else
             {
-                Values[1][0] = 0;
+                // If effective volume is not significant, use a neutral color
+                PlotBrushes[1][0] = Brushes.DimGray;
             }
         }
 
@@ -665,12 +648,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 (float)labelFontSize);
         }
 
-        private void UpdateColorStrategy(double highThreshold, double mediumThreshold)
-        {
-            // Update the color strategy with new thresholds
-            colorStrategy = new DefaultVolumeColorStrategy(highThreshold, mediumThreshold);
-        }
-
         #region Properties
         [NinjaScriptProperty]
         [Range(VolumeConstants.MIN_OPACITY, VolumeConstants.MAX_OPACITY)]
@@ -737,11 +714,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "High Volume Threshold", Description = "Ratio threshold for high volume (orange color)", Order = 5, GroupName = "Parameters")]
         public double HighVolumeThreshold
         {
-            get => ((DefaultVolumeColorStrategy)colorStrategy).GetHighThreshold();
+            get => highVolumeThreshold;
             set
             {
                 if (value >= VolumeConstants.MIN_VOLUME_THRESHOLD && value <= VolumeConstants.MAX_VOLUME_THRESHOLD)
-                    UpdateColorStrategy(value, ((DefaultVolumeColorStrategy)colorStrategy).GetMediumThreshold());
+                    highVolumeThreshold = value;
                 else
                     Print($"RyFVol: HighVolumeThreshold must be between {VolumeConstants.MIN_VOLUME_THRESHOLD} and {VolumeConstants.MAX_VOLUME_THRESHOLD}");
             }
@@ -752,11 +729,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "Medium Volume Threshold", Description = "Ratio threshold for medium volume (white color)", Order = 6, GroupName = "Parameters")]
         public double MediumVolumeThreshold
         {
-            get => ((DefaultVolumeColorStrategy)colorStrategy).GetMediumThreshold();
+            get => mediumVolumeThreshold;
             set
             {
                 if (value >= VolumeConstants.MIN_VOLUME_THRESHOLD && value <= VolumeConstants.MAX_VOLUME_THRESHOLD)
-                    UpdateColorStrategy(((DefaultVolumeColorStrategy)colorStrategy).GetHighThreshold(), value);
+                    mediumVolumeThreshold = value;
                 else
                     Print($"RyFVol: MediumVolumeThreshold must be between {VolumeConstants.MIN_VOLUME_THRESHOLD} and {VolumeConstants.MAX_VOLUME_THRESHOLD}");
             }

@@ -18,11 +18,6 @@ using System.Xml.Serialization;
 //This namespace holds Indicators in this folder and is required. Do not change it.
 namespace NinjaTrader.NinjaScript.Indicators.Gemify
 {
-    /// <summary>
-    /// Represents an indicator that calculates and displays the Initial Balance (IB) and its extensions for a trading session.
-    /// The Initial Balance is the price range established during a specific period at the beginning of the trading day.
-    /// This indicator supports customizable IB periods, extensions, display modes, and visual styles.
-    /// </summary>
     [Gui.CategoryOrder("Initial Balance Period", 1)]
     [Gui.CategoryOrder("Display Mode", 2)]
     [Gui.CategoryOrder("Full Mode Options", 3)]
@@ -70,31 +65,16 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
 
         private bool IsDebug;
 
-        /// <summary>
-        /// Defines the display modes for the Initial Balance indicator.
-        /// </summary>
         public enum IBDisplayModeEnum
         {
-            /// <summary>
-            /// Full display mode, showing all visual elements including rectangles, lines, and text.
-            /// </summary>
             FULL,
-            /// <summary>
-            /// Minimal display mode, showing only essential price markers on the right margin.
-            /// </summary>
             MINIMAL
         }
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="InitialBalance"/> class.
-        /// </summary>
         public InitialBalance()
         {
         }
 
-        /// <summary>
-        /// Called when the state of the indicator changes. This method is used for initialization and configuration.
-        /// </summary>
         protected override void OnStateChange()
         {
             Debug(this.Name + ":>>> " + State);
@@ -241,9 +221,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             if (IsDebug) Print(message);
         }
 
-        /// <summary>
-        /// Called on each bar update. This method contains the main logic for calculating and drawing the indicator.
-        /// </summary>
         protected override void OnBarUpdate()
         {
             // Work only with the second bar series
@@ -503,11 +480,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             }
         }
 
-        /// <summary>
-        /// Called to render the indicator on the chart. This method handles custom drawing of price markers.
-        /// </summary>
-        /// <param name="chartControl">The chart control object.</param>
-        /// <param name="chartScale">The chart scale object.</param>
         protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
         {
             // Operates only on the secondary time series (minute)
@@ -626,126 +598,82 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
 
         #region Properties
 
-        /// <summary>
-        /// Gets or sets the start time of the Initial Balance period.
-        /// </summary>
         [NinjaScriptProperty]
         [PropertyEditor("NinjaTrader.Gui.Tools.TimeEditorKey")]
         [Display(Name = "Initial Balance Begin", Description = "Initial balance begin time", Order = 100, GroupName = "Initial Balance Period")]
         public DateTime IBStartTime
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the end time of the Initial Balance period.
-        /// </summary>
         [NinjaScriptProperty]
         [PropertyEditor("NinjaTrader.Gui.Tools.TimeEditorKey")]
         [Display(Name = "Initial Balance End", Description = "Initial balance end time", Order = 200, GroupName = "Initial Balance Period")]
         public DateTime IBEndTime
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the end time of the trading session.
-        /// </summary>
         [PropertyEditor("NinjaTrader.Gui.Tools.TimeEditorKey")]
         [Display(Name = "Session End Time", Description = "Session end time", Order = 300, GroupName = "Initial Balance Period")]
         public DateTime SessionEndTime
         { get; set; }
 
         // ----------- Options
-        /// <summary>
-        /// Gets or sets the display mode for the indicator (Full or Minimal).
-        /// </summary>
         [Display(Name = "Display Mode", Description = "Full or Minimal mode", Order = 100, GroupName = "Display Mode")]
         public IBDisplayModeEnum DisplayMode
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the text position for the IB Range in Minimal mode.
-        /// </summary>
         [Display(Name = "IB Range Text Position", Description = "IB Range Text Position", Order = 100, GroupName = "Minimal Mode Options")]
         public TextPosition MarkersOnlyIBRangeTextPosition
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets a value indicating whether to plot historical Initial Balances.
-        /// </summary>
+
         [Display(Name = "Plot Historical IBs", Description = "Plot Historical IBs", Order = 50, GroupName = "Full Mode Options")]
         public bool PlotHistoricalIBs
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the number of historical days to look back for plotting IBs.
-        /// </summary>
         [Range(0, 365)]
         [Display(Name = "Max Historical IBs (days)", Description = "Number of Historical IBs to calculate (Max 365 days)", Order = 75, GroupName = "Full Mode Options")]
         public int HistoricalIBLookback
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets a value indicating whether to highlight the Initial Balance period on the chart.
-        /// </summary>
         [Display(Name = "Highlight IB Period", Description = "Highlight IB Period", Order = 100, GroupName = "Full Mode Options")]
         public bool HighlightIBPeriod
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets a value indicating whether to display the IB range text.
-        /// </summary>
+
         [Display(Name = "Display IB Range Text", Description = "Display IB Range Text", Order = 200, GroupName = "Options")]
         public bool DisplayIBRange
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets a value indicating whether to display the Opening Range (first 30 seconds).
-        /// </summary>
         [Display(Name = "Display Opening Range (30 sec)", Description = "Display Opening Range (30 seconds)", Order = 300, GroupName = "Options")]
         public bool DisplayOR
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets a value indicating whether to display the session midpoint line.
-        /// </summary>
         [Display(Name = "Display Session Mid", Description = "Display Session Mid", Order = 400, GroupName = "Options")]
         public bool DisplaySessionMid
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets a value indicating whether to display price markers on the right margin.
-        /// </summary>
         [Display(Name = "Price Markers", Description = "Display Markers on the Right Margin", Order = 500, GroupName = "Options")]
         public bool DisplayMarginMarkers
         { get; set; }
 
+
+
         // ----------- IB Extensions
 
-        /// <summary>
-        /// Gets or sets a value indicating whether to display the first IB extension.
-        /// </summary>
         [Display(Name = "Display IB Extension", Description = "Display IB Extension", Order = 100, GroupName = "IB Extension 1")]
         public bool DisplayIBX1
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the multiplier for the first IB extension.
-        /// </summary>
         [NinjaScriptProperty]
         [Range(1.0, double.MaxValue)]
         [Display(Name = "IB Extension Multiple", Description = "IB Extension Multiple", Order = 200, GroupName = "IB Extension 1")]
         public double IBX1Multiple
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the color for the first IB extension line.
-        /// </summary>
         [XmlIgnore]
         [Display(Name = "IB Extension Line Color", Description = "IB Extension line color", Order = 300, GroupName = "IB Extension 1")]
         public Brush IBX1Color
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the serializable string for the first IB extension line color.
-        /// </summary>
         [Browsable(false)]
         public string IBX1ColorSerializable
         {
@@ -753,50 +681,35 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             set { IBX1Color = Serialize.StringToBrush(value); }
         }
 
-        /// <summary>
-        /// Gets or sets the dash style for the first IB extension line.
-        /// </summary>
         [XmlIgnore]
         [Display(Name = "IB Extension Line DashStyle", Description = "IB Extension line dash style", Order = 400, GroupName = "IB Extension 1")]
         public DashStyleHelper IBX1DashStyle
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the width of the first IB extension line.
-        /// </summary>
         [XmlIgnore]
         [Range(1, 10)]
         [Display(Name = "IB Extension Line Thickness", Description = "IB Extension line thickness", Order = 500, GroupName = "IB Extension 1")]
         public int IBX1Width
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets a value indicating whether to display the second IB extension.
-        /// </summary>
+
+
+
         [Display(Name = "Display IB Extension", Description = "Display IB Extension", Order = 100, GroupName = "IB Extension 2")]
         public bool DisplayIBX2
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the multiplier for the second IB extension.
-        /// </summary>
         [NinjaScriptProperty]
         [Range(1.0, double.MaxValue)]
         [Display(Name = "IB Extension Multiple", Description = "IB Extension Multiple", Order = 200, GroupName = "IB Extension 2")]
         public double IBX2Multiple
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the color for the second IB extension line.
-        /// </summary>
         [XmlIgnore]
         [Display(Name = "IB Extension Line Color", Description = "IB Extension line color", Order = 300, GroupName = "IB Extension 2")]
         public Brush IBX2Color
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the serializable string for the second IB extension line color.
-        /// </summary>
         [Browsable(false)]
         public string IBX2ColorSerializable
         {
@@ -804,50 +717,34 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             set { IBX2Color = Serialize.StringToBrush(value); }
         }
 
-        /// <summary>
-        /// Gets or sets the dash style for the second IB extension line.
-        /// </summary>
         [XmlIgnore]
         [Display(Name = "IB Extension Line DashStyle", Description = "IB Extension line dash style", Order = 400, GroupName = "IB Extension 2")]
         public DashStyleHelper IBX2DashStyle
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the width of the second IB extension line.
-        /// </summary>
         [XmlIgnore]
         [Range(1, 10)]
         [Display(Name = " Extension Line Thickness", Description = "IB Extension line thickness", Order = 500, GroupName = "IB Extension 2")]
         public int IBX2Width
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets a value indicating whether to display the third IB extension.
-        /// </summary>
+
+
         [Display(Name = "Display IB Extension", Description = "Display IB Extension", Order = 100, GroupName = "IB Extension 3")]
         public bool DisplayIBX3
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the multiplier for the third IB extension.
-        /// </summary>
         [NinjaScriptProperty]
         [Range(1.0, double.MaxValue)]
         [Display(Name = "IB Extension Multiple", Description = "IB Extension Multiple", Order = 200, GroupName = "IB Extension 3")]
         public double IBX3Multiple
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the color for the third IB extension line.
-        /// </summary>
         [XmlIgnore]
         [Display(Name = "IB Extension Line Color", Description = "IB Extension line color", Order = 300, GroupName = "IB Extension 3")]
         public Brush IBX3Color
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the serializable string for the third IB extension line color.
-        /// </summary>
         [Browsable(false)]
         public string IBX3ColorSerializable
         {
@@ -855,17 +752,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             set { IBX3Color = Serialize.StringToBrush(value); }
         }
 
-        /// <summary>
-        /// Gets or sets the dash style for the third IB extension line.
-        /// </summary>
         [XmlIgnore]
         [Display(Name = "IB Extension Line DashStyle", Description = "IB Extension line dash style", Order = 400, GroupName = "IB Extension 3")]
         public DashStyleHelper IBX3DashStyle
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the width of the third IB extension line.
-        /// </summary>
         [XmlIgnore]
         [Range(1, 10)]
         [Display(Name = " Extension Line Thickness", Description = "IB Extension line thickness", Order = 500, GroupName = "IB Extension 3")]
@@ -874,17 +765,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
 
         // ----------- Colors
 
-        /// <summary>
-        /// Gets or sets the fill color for the Initial Balance range.
-        /// </summary>
         [XmlIgnore]
         [Display(Name = "Initial Balance Fill Color", Description = "Initial Balance fill color", Order = 100, GroupName = "Colors")]
         public Brush IBFillColor
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the serializable string for the IB fill color.
-        /// </summary>
         [Browsable(false)]
         public string IBFillColorSerializable
         {
@@ -892,25 +777,16 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             set { IBFillColor = Serialize.StringToBrush(value); }
         }
 
-        /// <summary>
-        /// Gets or sets the opacity of the Initial Balance fill.
-        /// </summary>
         [Range(1, 100)]
         [Display(Name = "Opacity", Description = "Opacity of Initial Balance", Order = 200, GroupName = "Colors")]
         public int IBFillOpacity
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the highlight color for the Initial Balance period.
-        /// </summary>
         [XmlIgnore]
         [Display(Name = "Initial Balance Hightlight Color", Description = "Initial Balance highlight color", Order = 300, GroupName = "Colors")]
         public Brush IBHighlightColor
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the serializable string for the IB highlight color.
-        /// </summary>
         [Browsable(false)]
         public string IBHighlightColorSerializable
         {
@@ -918,25 +794,16 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             set { IBHighlightColor = Serialize.StringToBrush(value); }
         }
 
-        /// <summary>
-        /// Gets or sets the opacity of the Initial Balance highlight.
-        /// </summary>
         [Range(1, 100)]
         [Display(Name = "IB Highlight Opacity", Description = "Initial Balance hightlight opacity", Order = 400, GroupName = "Colors")]
         public int IBHighlightOpacity
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the color for the IB range text.
-        /// </summary>
         [XmlIgnore]
         [Display(Name = "IB Range Text Color", Description = "Color to use to display IB range", Order = 500, GroupName = "Colors")]
         public Brush TextColor
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the serializable string for the IB range text color.
-        /// </summary>
         [Browsable(false)]
         public string TextColorSerializable
         {
@@ -944,25 +811,16 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             set { TextColor = Serialize.StringToBrush(value); }
         }
 
-        /// <summary>
-        /// Gets or sets the font for the IB range text.
-        /// </summary>
         [XmlIgnore]
         [Display(Name = "IB Range Text Font", Description = "Font to use to display IB range", Order = 600, GroupName = "Colors")]
         public SimpleFont TextFont
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the color for the Opening Range lines.
-        /// </summary>
         [XmlIgnore]
         [Display(Name = "Opening Range Lines Color", Description = "Opening Range lines color", Order = 700, GroupName = "Colors")]
         public Brush ORLineColor
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the serializable string for the Opening Range line color.
-        /// </summary>
         [Browsable(false)]
         public string ORLineColorSerializable
         {
@@ -970,17 +828,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             set { ORLineColor = Serialize.StringToBrush(value); }
         }
 
-        /// <summary>
-        /// Gets or sets the color for the session midpoint line.
-        /// </summary>
         [XmlIgnore]
         [Display(Name = "Session Mid Line Color", Description = "Session Mid line color", Order = 800, GroupName = "Colors")]
         public Brush SessionMidColor
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the serializable string for the session midpoint line color.
-        /// </summary>
         [Browsable(false)]
         public string SessionMidColorSerializable
         {
@@ -988,17 +840,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             set { SessionMidColor = Serialize.StringToBrush(value); }
         }
 
-        /// <summary>
-        /// Gets or sets the text color for margin markers.
-        /// </summary>
         [XmlIgnore]
         [Display(Name = "Margin Marker Text Color", Description = "Margin Marker Text color", Order = 100, GroupName = "Margin Marker Colors")]
         public Brush MarginMarkerTextBrush
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the serializable string for the margin marker text color.
-        /// </summary>
         [Browsable(false)]
         public string MarginMarkerTextBrushSerializable
         {
@@ -1006,17 +852,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             set { MarginMarkerTextBrush = Serialize.StringToBrush(value); }
         }
 
-        /// <summary>
-        /// Gets or sets the fill color for margin markers.
-        /// </summary>
         [XmlIgnore]
         [Display(Name = "Margin Marker Fill Color", Description = "Margin Marker Fill color", Order = 200, GroupName = "Margin Marker Colors")]
         public Brush MarginMarkerFillBrush
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the serializable string for the margin marker fill color.
-        /// </summary>
         [Browsable(false)]
         public string MarginMarkerFillBrushSerializable
         {
@@ -1024,17 +864,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             set { MarginMarkerFillBrush = Serialize.StringToBrush(value); }
         }
 
-        /// <summary>
-        /// Gets or sets the border color for margin markers.
-        /// </summary>
         [XmlIgnore]
         [Display(Name = "Margin Marker Border Color", Description = "Margin Marker Border color", Order = 300, GroupName = "Margin Marker Colors")]
         public Brush MarginMarkerBorderBrush
         { get; set; }
 
-        /// <summary>
-        /// Gets or sets the serializable string for the margin marker border color.
-        /// </summary>
         [Browsable(false)]
         public string MarginMarkerBorderBrushSerializable
         {
@@ -1046,9 +880,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
 
         #region Public Properties
 
-        /// <summary>
-        /// Gets a value indicating whether the Initial Balance calculation is complete for the current session.
-        /// </summary>
         [Browsable(false)]
         [XmlIgnore()]
         public bool IsIBComplete
@@ -1056,9 +887,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             get { return _ibComplete; }
         }
 
-        /// <summary>
-        /// Gets a value indicating whether the Opening Range calculation is complete for the current session.
-        /// </summary>
         [Browsable(false)]
         [XmlIgnore()]
         public bool IsORComplete
@@ -1066,9 +894,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             get { return _orComplete; }
         }
 
-        /// <summary>
-        /// Gets the high price of the Initial Balance range.
-        /// </summary>
         [Browsable(false)]
         [XmlIgnore()]
         public double IBHigh
@@ -1076,9 +901,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             get { return _ibHigh; }
         }
 
-        /// <summary>
-        /// Gets the low price of the Initial Balance range.
-        /// </summary>
         [Browsable(false)]
         [XmlIgnore()]
         public double IBLow
@@ -1086,9 +908,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             get { return this._ibLow; }
         }
 
-        /// <summary>
-        /// Gets the high price of the Opening Range.
-        /// </summary>
         [Browsable(false)]
         [XmlIgnore()]
         public double ORHigh
@@ -1096,9 +915,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             get { return _orHigh; }
         }
 
-        /// <summary>
-        /// Gets the low price of the Opening Range.
-        /// </summary>
         [Browsable(false)]
         [XmlIgnore()]
         public double ORLow
@@ -1106,9 +922,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             get { return _orLow; }
         }
 
-        /// <summary>
-        /// Gets the midpoint of the Initial Balance range.
-        /// </summary>
         [Browsable(false)]
         [XmlIgnore()]
         public double SessionMid
@@ -1116,18 +929,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             get { return _sessMid; }
         }
 
-        /// <summary>
-        /// Gets the upper price of the first IB extension.
-        /// </summary>
         [Browsable(false)]
         [XmlIgnore()]
         public double IBX1Upper
         {
             get { return _ibx1Upper; }
         }
-        /// <summary>
-        /// Gets the lower price of the first IB extension.
-        /// </summary>
         [Browsable(false)]
         [XmlIgnore()]
         public double IBX1Lower
@@ -1135,36 +942,24 @@ namespace NinjaTrader.NinjaScript.Indicators.Gemify
             get { return _ibx1Lower; }
         }
 
-        /// <summary>
-        /// Gets the upper price of the second IB extension.
-        /// </summary>
         [Browsable(false)]
         [XmlIgnore()]
         public double IBX2Upper
         {
             get { return _ibx2Upper; }
         }
-        /// <summary>
-        /// Gets the lower price of the second IB extension.
-        /// </summary>
         [Browsable(false)]
         [XmlIgnore()]
         public double IBX2Lower
         {
             get { return _ibx2Lower; }
         }
-        /// <summary>
-        /// Gets the upper price of the third IB extension.
-        /// </summary>
         [Browsable(false)]
         [XmlIgnore()]
         public double IBX3Upper
         {
             get { return _ibx3Upper; }
         }
-        /// <summary>
-        /// Gets the lower price of the third IB extension.
-        /// </summary>
         [Browsable(false)]
         [XmlIgnore()]
         public double IBX3Lower
@@ -1183,30 +978,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
 		private Gemify.InitialBalance[] cacheInitialBalance;
-		/// <summary>
-		/// Gets an instance of the InitialBalance indicator with specified parameters.
-		/// </summary>
-		/// <param name="iBStartTime">The start time of the Initial Balance period.</param>
-		/// <param name="iBEndTime">The end time of the Initial Balance period.</param>
-		/// <param name="iBX1Multiple">The multiplier for the first IB extension.</param>
-		/// <param name="iBX2Multiple">The multiplier for the second IB extension.</param>
-		/// <param name="iBX3Multiple">The multiplier for the third IB extension.</param>
-		/// <returns>An instance of the InitialBalance indicator.</returns>
 		public Gemify.InitialBalance InitialBalance(DateTime iBStartTime, DateTime iBEndTime, double iBX1Multiple, double iBX2Multiple, double iBX3Multiple)
 		{
 			return InitialBalance(Input, iBStartTime, iBEndTime, iBX1Multiple, iBX2Multiple, iBX3Multiple);
 		}
 
-		/// <summary>
-		/// Gets an instance of the InitialBalance indicator with a specific input series and parameters.
-		/// </summary>
-		/// <param name="input">The input series for the indicator.</param>
-		/// <param name="iBStartTime">The start time of the Initial Balance period.</param>
-		/// <param name="iBEndTime">The end time of the Initial Balance period.</param>
-		/// <param name="iBX1Multiple">The multiplier for the first IB extension.</param>
-		/// <param name="iBX2Multiple">The multiplier for the second IB extension.</param>
-		/// <param name="iBX3Multiple">The multiplier for the third IB extension.</param>
-		/// <returns>An instance of the InitialBalance indicator.</returns>
 		public Gemify.InitialBalance InitialBalance(ISeries<double> input, DateTime iBStartTime, DateTime iBEndTime, double iBX1Multiple, double iBX2Multiple, double iBX3Multiple)
 		{
 			if (cacheInitialBalance != null)
@@ -1222,30 +998,11 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		/// <summary>
-		/// Gets an instance of the InitialBalance indicator for use in a Market Analyzer column.
-		/// </summary>
-		/// <param name="iBStartTime">The start time of the Initial Balance period.</param>
-		/// <param name="iBEndTime">The end time of the Initial Balance period.</param>
-		/// <param name="iBX1Multiple">The multiplier for the first IB extension.</param>
-		/// <param name="iBX2Multiple">The multiplier for the second IB extension.</param>
-		/// <param name="iBX3Multiple">The multiplier for the third IB extension.</param>
-		/// <returns>An instance of the InitialBalance indicator.</returns>
 		public Indicators.Gemify.InitialBalance InitialBalance(DateTime iBStartTime, DateTime iBEndTime, double iBX1Multiple, double iBX2Multiple, double iBX3Multiple)
 		{
 			return indicator.InitialBalance(Input, iBStartTime, iBEndTime, iBX1Multiple, iBX2Multiple, iBX3Multiple);
 		}
 
-		/// <summary>
-		/// Gets an instance of the InitialBalance indicator with a specific input series for use in a Market Analyzer column.
-		/// </summary>
-		/// <param name="input">The input series for the indicator.</param>
-		/// <param name="iBStartTime">The start time of the Initial Balance period.</param>
-		/// <param name="iBEndTime">The end time of the Initial Balance period.</param>
-		/// <param name="iBX1Multiple">The multiplier for the first IB extension.</param>
-		/// <param name="iBX2Multiple">The multiplier for the second IB extension.</param>
-		/// <param name="iBX3Multiple">The multiplier for the third IB extension.</param>
-		/// <returns>An instance of the InitialBalance indicator.</returns>
 		public Indicators.Gemify.InitialBalance InitialBalance(ISeries<double> input , DateTime iBStartTime, DateTime iBEndTime, double iBX1Multiple, double iBX2Multiple, double iBX3Multiple)
 		{
 			return indicator.InitialBalance(input, iBStartTime, iBEndTime, iBX1Multiple, iBX2Multiple, iBX3Multiple);
@@ -1257,30 +1014,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		/// <summary>
-		/// Gets an instance of the InitialBalance indicator for use in a strategy.
-		/// </summary>
-		/// <param name="iBStartTime">The start time of the Initial Balance period.</param>
-		/// <param name="iBEndTime">The end time of the Initial Balance period.</param>
-		/// <param name="iBX1Multiple">The multiplier for the first IB extension.</param>
-		/// <param name="iBX2Multiple">The multiplier for the second IB extension.</param>
-		/// <param name="iBX3Multiple">The multiplier for the third IB extension.</param>
-		/// <returns>An instance of the InitialBalance indicator.</returns>
 		public Indicators.Gemify.InitialBalance InitialBalance(DateTime iBStartTime, DateTime iBEndTime, double iBX1Multiple, double iBX2Multiple, double iBX3Multiple)
 		{
 			return indicator.InitialBalance(Input, iBStartTime, iBEndTime, iBX1Multiple, iBX2Multiple, iBX3Multiple);
 		}
 
-		/// <summary>
-		/// Gets an instance of the InitialBalance indicator with a specific input series for use in a strategy.
-		/// </summary>
-		/// <param name="input">The input series for the indicator.</param>
-		/// <param name="iBStartTime">The start time of the Initial Balance period.</param>
-		/// <param name="iBEndTime">The end time of the Initial Balance period.</param>
-		/// <param name="iBX1Multiple">The multiplier for the first IB extension.</param>
-		/// <param name="iBX2Multiple">The multiplier for the second IB extension.</param>
-		/// <param name="iBX3Multiple">The multiplier for the third IB extension.</param>
-		/// <returns>An instance of the InitialBalance indicator.</returns>
 		public Indicators.Gemify.InitialBalance InitialBalance(ISeries<double> input , DateTime iBStartTime, DateTime iBEndTime, double iBX1Multiple, double iBX2Multiple, double iBX3Multiple)
 		{
 			return indicator.InitialBalance(input, iBStartTime, iBEndTime, iBX1Multiple, iBX2Multiple, iBX3Multiple);
