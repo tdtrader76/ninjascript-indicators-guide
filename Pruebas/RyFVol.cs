@@ -674,8 +674,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (value >= VolumeConstants.MIN_OPACITY && value <= VolumeConstants.MAX_OPACITY)
                     totalVolumeOpacity = value;
-                else
-                    Print($"RyFVol: TotalVolumeOpacity must be between {VolumeConstants.MIN_OPACITY} and {VolumeConstants.MAX_OPACITY}");
             }
         }
 
@@ -689,8 +687,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (value >= VolumeConstants.MIN_THRESHOLD && value <= VolumeConstants.MAX_THRESHOLD)
                     threshold = value;
-                else
-                    Print($"RyFVol: Threshold must be between {VolumeConstants.MIN_THRESHOLD} and {VolumeConstants.MAX_THRESHOLD}");
             }
         }
 
@@ -704,8 +700,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (value >= VolumeConstants.MIN_FONT_SIZE && value <= VolumeConstants.MAX_FONT_SIZE)
                     labelFontSize = value;
-                else
-                    Print($"RyFVol: LabelFontSize must be between {VolumeConstants.MIN_FONT_SIZE} and {VolumeConstants.MAX_FONT_SIZE}");
             }
         }
 
@@ -719,8 +713,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (value >= VolumeConstants.MIN_EMA_PERIOD && value <= VolumeConstants.MAX_EMA_PERIOD)
                     emaPeriod = value;
-                else
-                    Print($"RyFVol: EmaPeriod must be between {VolumeConstants.MIN_EMA_PERIOD} and {VolumeConstants.MAX_EMA_PERIOD}");
             }
         }
 
@@ -734,14 +726,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (value >= VolumeConstants.MIN_VOLUME_THRESHOLD && value <= VolumeConstants.MAX_VOLUME_THRESHOLD)
                     highVolumeThreshold = value;
-                else
-                    Print($"RyFVol: HighVolumeThreshold must be between {VolumeConstants.MIN_VOLUME_THRESHOLD} and {VolumeConstants.MAX_VOLUME_THRESHOLD}");
             }
         }
 
         [NinjaScriptProperty]
         [Range(VolumeConstants.MIN_VOLUME_THRESHOLD, VolumeConstants.MAX_VOLUME_THRESHOLD)]
-        [Display(Name = "Medium Volume Threshold", Description = "Ratio threshold for medium volume (white color)", Order = 6, GroupName = "Parameters")]
+        [Display(Name = "Medium Volume Threshold", Description = "Ratio threshold for medium volume (blue color)", Order = 6, GroupName = "Parameters")]
         public double MediumVolumeThreshold
         {
             get => mediumVolumeThreshold;
@@ -749,8 +739,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (value >= VolumeConstants.MIN_VOLUME_THRESHOLD && value <= VolumeConstants.MAX_VOLUME_THRESHOLD)
                     mediumVolumeThreshold = value;
-                else
-                    Print($"RyFVol: MediumVolumeThreshold must be between {VolumeConstants.MIN_VOLUME_THRESHOLD} and {VolumeConstants.MAX_VOLUME_THRESHOLD}");
             }
         }
 
@@ -764,8 +752,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (value >= 1.0 && value <= 10.0)
                     whiteVolumeMultiplier = value;
-                else
-                    Print("RyFVol: WhiteVolumeMultiplier must be between 1.0 and 10.0");
             }
         }
 
@@ -779,8 +765,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (value >= 1 && value <= 100)
                     whiteVolumeSmaPeriod = value;
-                else
-                    Print("RyFVol: WhiteVolumeSmaPeriod must be between 1 and 100");
             }
         }
 
