@@ -215,12 +215,12 @@ namespace NinjaTrader.NinjaScript.Indicators
 					float x = CalculateTableXPosition(textLayout.Metrics.Width);
 					float y = CalculateTableYPosition(textLayout.Metrics.Height);
 
-					using (var bgBrush = new SolidColorBrush(RenderTarget, new Color4(0, 0, 0, 0.8f)))
+					using (var bgBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0, 0, 0, 0.8f)))
 					{
 						RenderTarget.FillRectangle(new RectangleF(x - 5, y - 5, textLayout.Metrics.Width + 10, textLayout.Metrics.Height + 10), bgBrush);
 					}
 
-					using (var textBrush = new SolidColorBrush(RenderTarget, Color4.White))
+					using (var textBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, Color4.White))
 					{
 						RenderTarget.DrawTextLayout(new Vector2(x, y), textLayout, textBrush);
 					}
