@@ -44,6 +44,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         // EMA indicator
         private EMA emaIndicator;
+		private SMA volumeSma;
 
         protected override void OnStateChange()
         {
@@ -85,6 +86,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 // Initialize EMA indicator on the volume series
                 emaIndicator = EMA(VOL(), EmaPeriod);
+				volumeSma = SMA(Volume, 10);
             }
             else if (State == State.Terminated)
             {
@@ -240,6 +242,23 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     Values[1][0] = 0;
                 }
+
+				// --- Nueva lógica para dibujar puntos ---
+				if (CurrentBar > 10) // Asegurarse de que la SMA tenga suficientes datos
+				{
+					double smaValue = volumeSma[0];
+					double volumeValue = Volume[0];
+					double offset = 10 * TickSize;
+
+					if (volumeValue > smaValue * 2)
+					{
+						Draw.Dot(this, "VolumeSpike" + CurrentBar, false, 0, volumeValue + offset, Brushes.White);
+					}
+					else if (volumeValue > smaValue * 1.5)
+					{
+						Draw.Dot(this, "VolumeSpike" + CurrentBar, false, 0, volumeValue + offset, Brushes.Green);
+					}
+				}
             }
             catch (Exception ex)
             {
