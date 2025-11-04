@@ -31,7 +31,7 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //This namespace holds Indicators in this folder and is required. Do not change it.
 namespace NinjaTrader.NinjaScript.Indicators
 {
-	public class LargeTradesNT8 : Indicator
+	public class LTRyF : Indicator
 	{
 		private int entryBar;
 
@@ -40,7 +40,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 			if (State == State.SetDefaults)
 			{
 				Description									= @"Large Trades";
-				Name										= "LargeTradesNT8";
+				Name										= "LTRyF";
 				Calculate									= Calculate.OnBarClose;
 				IsOverlay									= false;
 				DisplayInDataBox							= true;
@@ -102,48 +102,53 @@ namespace NinjaTrader.NinjaScript.Indicators
 						entryBar = CurrentBars[0];
 					}
 
-					double dotYPosition = 0;
+					// Determine if the bar is bullish or bearish
+					bool isBullish = Close[0] >= Open[0];
+
+					// Calculate the base position for the dot
+					double dotYPosition;
+					if (isBullish)
+					{
+						dotYPosition = High[0] + (25 * TickSize);
+					}
+					else
+					{
+						dotYPosition = Low[0] - (25 * TickSize);
+					}
+
+					// Draw the dot if enabled
 					if (TradeDot)
 					{
-						bool isBullish = Close[0] >= Open[0];
-						if (isBullish)
-						{
-							dotYPosition = High[0] + (15 * TickSize);
-						}
-						else
-						{
-							dotYPosition = Low[0] - (15 * TickSize);
-						}
 						Draw.Dot(this, "LargeTradeDot" + CurrentBar, true, 0, dotYPosition, TradeColor);
 					}
 
+					// Draw the appropriate text (time or price)
 					if (TradeTime)
 					{
+						// The user's request was to adjust the price label, not the time label.
+						// We keep the original positioning for the time label to avoid unintended changes.
 						Draw.Text(this, "TFx" + CurrentBar, true, Convert.ToString(Time[0]), 0, Median[0], 0, TextColor,
 						new SimpleFont("Small Fonts", 12), TextAlignment.Right, Brushes.Transparent, Brushes.Transparent, 0);
 					}
 					else
 					{
-						double priceToShow = (High[0] + Low[0]) / 2;
-						string tradeInfo = Instrument.MasterInstrument.FormatPrice(priceToShow);
+						// Calculate the position for the price label, adding separation from the dot's position
 						double textYPosition;
-
-						if (TradeDot)
+						if (isBullish)
 						{
-							textYPosition = dotYPosition;
+							// Place the text further away from the bar than the dot
+							textYPosition = dotYPosition + (10 * TickSize);
 						}
 						else
 						{
-							bool isBullish = Close[0] >= Open[0];
-							if (isBullish)
-							{
-								textYPosition = High[0] + (15 * TickSize);
-							}
-							else
-							{
-								textYPosition = Low[0] - (15 * TickSize);
-							}
+							// Place the text further away from the bar than the dot
+							textYPosition = dotYPosition - (10 * TickSize);
 						}
+
+						double priceToShow = (High[0] + Low[0]) / 2;
+						string tradeInfo = Instrument.MasterInstrument.FormatPrice(priceToShow);
+
+						// Draw the price label at its calculated position
 						Draw.Text(this, "LargeTradePrice" + CurrentBar, true, tradeInfo, 0, textYPosition, 0, TextColor,
 							new SimpleFont("Small Fonts", 12), TextAlignment.Right, Brushes.Transparent, Brushes.Transparent, 0);
 					}
@@ -265,19 +270,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 {
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
-		private LargeTradesNT8[] cacheLargeTradesNT8;
-		public LargeTradesNT8 LargeTradesNT8(int largeVolume, int timeFix, Brush tradeColor, Brush textColor, Brush tradeShadowColor, int colorOpacity, bool tradeAlert, bool tradeDot, double tradeBarWidth, bool tradeTime, string alertSound)
+		private LTRyF[] cacheLTRyF;
+		public LTRyF LTRyF(int largeVolume, int timeFix, Brush tradeColor, Brush textColor, Brush tradeShadowColor, int colorOpacity, bool tradeAlert, bool tradeDot, double tradeBarWidth, bool tradeTime, string alertSound)
 		{
-			return LargeTradesNT8(Input, largeVolume, timeFix, tradeColor, textColor, tradeShadowColor, colorOpacity, tradeAlert, tradeDot, tradeBarWidth, tradeTime, alertSound);
+			return LTRyF(Input, largeVolume, timeFix, tradeColor, textColor, tradeShadowColor, colorOpacity, tradeAlert, tradeDot, tradeBarWidth, tradeTime, alertSound);
 		}
 
-		public LargeTradesNT8 LargeTradesNT8(ISeries<double> input, int largeVolume, int timeFix, Brush tradeColor, Brush textColor, Brush tradeShadowColor, int colorOpacity, bool tradeAlert, bool tradeDot, double tradeBarWidth, bool tradeTime, string alertSound)
+		public LTRyF LTRyF(ISeries<double> input, int largeVolume, int timeFix, Brush tradeColor, Brush textColor, Brush tradeShadowColor, int colorOpacity, bool tradeAlert, bool tradeDot, double tradeBarWidth, bool tradeTime, string alertSound)
 		{
-			if (cacheLargeTradesNT8 != null)
-				for (int idx = 0; idx < cacheLargeTradesNT8.Length; idx++)
-					if (cacheLargeTradesNT8[idx] != null && cacheLargeTradesNT8[idx].LargeVolume == largeVolume && cacheLargeTradesNT8[idx].TimeFix == timeFix && cacheLargeTradesNT8[idx].TradeColor == tradeColor && cacheLargeTradesNT8[idx].TextColor == textColor && cacheLargeTradesNT8[idx].TradeShadowColor == tradeShadowColor && cacheLargeTradesNT8[idx].ColorOpacity == colorOpacity && cacheLargeTradesNT8[idx].TradeAlert == tradeAlert && cacheLargeTradesNT8[idx].TradeDot == tradeDot && cacheLargeTradesNT8[idx].TradeBarWidth == tradeBarWidth && cacheLargeTradesNT8[idx].TradeTime == tradeTime && cacheLargeTradesNT8[idx].AlertSound == alertSound && cacheLargeTradesNT8[idx].EqualsInput(input))
-						return cacheLargeTradesNT8[idx];
-			return CacheIndicator<LargeTradesNT8>(new LargeTradesNT8(){ LargeVolume = largeVolume, TimeFix = timeFix, TradeColor = tradeColor, TextColor = textColor, TradeShadowColor = tradeShadowColor, ColorOpacity = colorOpacity, TradeAlert = tradeAlert, TradeDot = tradeDot, TradeBarWidth = tradeBarWidth, TradeTime = tradeTime, AlertSound = alertSound }, input, ref cacheLargeTradesNT8);
+			if (cacheLTRyF != null)
+				for (int idx = 0; idx < cacheLTRyF.Length; idx++)
+					if (cacheLTRyF[idx] != null && cacheLTRyF[idx].LargeVolume == largeVolume && cacheLTRyF[idx].TimeFix == timeFix && cacheLTRyF[idx].TradeColor == tradeColor && cacheLTRyF[idx].TextColor == textColor && cacheLTRyF[idx].TradeShadowColor == tradeShadowColor && cacheLTRyF[idx].ColorOpacity == colorOpacity && cacheLTRyF[idx].TradeAlert == tradeAlert && cacheLTRyF[idx].TradeDot == tradeDot && cacheLTRyF[idx].TradeBarWidth == tradeBarWidth && cacheLTRyF[idx].TradeTime == tradeTime && cacheLTRyF[idx].AlertSound == alertSound && cacheLTRyF[idx].EqualsInput(input))
+						return cacheLTRyF[idx];
+			return CacheIndicator<LTRyF>(new LTRyF(){ LargeVolume = largeVolume, TimeFix = timeFix, TradeColor = tradeColor, TextColor = textColor, TradeShadowColor = tradeShadowColor, ColorOpacity = colorOpacity, TradeAlert = tradeAlert, TradeDot = tradeDot, TradeBarWidth = tradeBarWidth, TradeTime = tradeTime, AlertSound = alertSound }, input, ref cacheLTRyF);
 		}
 	}
 }
@@ -286,14 +291,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.LargeTradesNT8 LargeTradesNT8(int largeVolume, int timeFix, Brush tradeColor, Brush textColor, Brush tradeShadowColor, int colorOpacity, bool tradeAlert, bool tradeDot, double tradeBarWidth, bool tradeTime, string alertSound)
+		public Indicators.LTRyF LTRyF(int largeVolume, int timeFix, Brush tradeColor, Brush textColor, Brush tradeShadowColor, int colorOpacity, bool tradeAlert, bool tradeDot, double tradeBarWidth, bool tradeTime, string alertSound)
 		{
-			return indicator.LargeTradesNT8(Input, largeVolume, timeFix, tradeColor, textColor, tradeShadowColor, colorOpacity, tradeAlert, tradeDot, tradeBarWidth, tradeTime, alertSound);
+			return indicator.LTRyF(Input, largeVolume, timeFix, tradeColor, textColor, tradeShadowColor, colorOpacity, tradeAlert, tradeDot, tradeBarWidth, tradeTime, alertSound);
 		}
 
-		public Indicators.LargeTradesNT8 LargeTradesNT8(ISeries<double> input , int largeVolume, int timeFix, Brush tradeColor, Brush textColor, Brush tradeShadowColor, int colorOpacity, bool tradeAlert, bool tradeDot, double tradeBarWidth, bool tradeTime, string alertSound)
+		public Indicators.LTRyF LTRyF(ISeries<double> input , int largeVolume, int timeFix, Brush tradeColor, Brush textColor, Brush tradeShadowColor, int colorOpacity, bool tradeAlert, bool tradeDot, double tradeBarWidth, bool tradeTime, string alertSound)
 		{
-			return indicator.LargeTradesNT8(input, largeVolume, timeFix, tradeColor, textColor, tradeShadowColor, colorOpacity, tradeAlert, tradeDot, tradeBarWidth, tradeTime, alertSound);
+			return indicator.LTRyF(input, largeVolume, timeFix, tradeColor, textColor, tradeShadowColor, colorOpacity, tradeAlert, tradeDot, tradeBarWidth, tradeTime, alertSound);
 		}
 	}
 }
@@ -302,14 +307,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.LargeTradesNT8 LargeTradesNT8(int largeVolume, int timeFix, Brush tradeColor, Brush textColor, Brush tradeShadowColor, int colorOpacity, bool tradeAlert, bool tradeDot, double tradeBarWidth, bool tradeTime, string alertSound)
+		public Indicators.LTRyF LTRyF(int largeVolume, int timeFix, Brush tradeColor, Brush textColor, Brush tradeShadowColor, int colorOpacity, bool tradeAlert, bool tradeDot, double tradeBarWidth, bool tradeTime, string alertSound)
 		{
-			return indicator.LargeTradesNT8(Input, largeVolume, timeFix, tradeColor, textColor, tradeShadowColor, colorOpacity, tradeAlert, tradeDot, tradeBarWidth, tradeTime, alertSound);
+			return indicator.LTRyF(Input, largeVolume, timeFix, tradeColor, textColor, tradeShadowColor, colorOpacity, tradeAlert, tradeDot, tradeBarWidth, tradeTime, alertSound);
 		}
 
-		public Indicators.LargeTradesNT8 LargeTradesNT8(ISeries<double> input , int largeVolume, int timeFix, Brush tradeColor, Brush textColor, Brush tradeShadowColor, int colorOpacity, bool tradeAlert, bool tradeDot, double tradeBarWidth, bool tradeTime, string alertSound)
+		public Indicators.LTRyF LTRyF(ISeries<double> input , int largeVolume, int timeFix, Brush tradeColor, Brush textColor, Brush tradeShadowColor, int colorOpacity, bool tradeAlert, bool tradeDot, double tradeBarWidth, bool tradeTime, string alertSound)
 		{
-			return indicator.LargeTradesNT8(input, largeVolume, timeFix, tradeColor, textColor, tradeShadowColor, colorOpacity, tradeAlert, tradeDot, tradeBarWidth, tradeTime, alertSound);
+			return indicator.LTRyF(input, largeVolume, timeFix, tradeColor, textColor, tradeShadowColor, colorOpacity, tradeAlert, tradeDot, tradeBarWidth, tradeTime, alertSound);
 		}
 	}
 }
