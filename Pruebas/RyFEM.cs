@@ -1,3 +1,5 @@
+/// Modificación para que calcule exáctamente igual que el indicador de Tradingview
+
 #region Using declarations
 using System;
 using System.Collections.Generic;
