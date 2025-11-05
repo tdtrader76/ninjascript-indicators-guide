@@ -49,8 +49,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             if (State == State.SetDefaults)
             {
-				GreenDotThreshold = 1.5;
-				WhiteDotThreshold = 2.0;
                 Description = @"Volume indicator with Effective Volume and comparative volume analysis (CVOL2). Colors bars based on volume comparison with previous day.";
                 Name = "RyFVol";
                 Calculate = Calculate.OnBarClose;
@@ -242,23 +240,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     Values[1][0] = 0;
                 }
-
-				// --- Nueva lógica para dibujar puntos ---
-				if (CurrentBar >= EmaPeriod) // Asegurarse de que la EMA tenga suficientes datos
-				{
-					double emaValue = emaIndicator[0];
-					double volumeValue = Volume[0];
-					double offset = 10 * TickSize;
-
-					if (volumeValue > emaValue * WhiteDotThreshold)
-					{
-						Draw.Dot(this, "VolumeSpike" + CurrentBar, false, 0, volumeValue + offset, Brushes.White);
-					}
-					else if (volumeValue > emaValue * GreenDotThreshold)
-					{
-						Draw.Dot(this, "VolumeSpike" + CurrentBar, false, 0, volumeValue + offset, Brushes.Green);
-					}
-				}
             }
             catch (Exception ex)
             {
@@ -388,22 +369,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             set { mediumVolumeThreshold = Math.Max(1.0, Math.Min(10.0, value)); }
         }
 
-        [NinjaScriptProperty]
-        [Range(0.1, 10.0)]
-        [Display(Name = "Green Dot Threshold", Description = "Multiplier for EMA to draw a green dot", Order = 6, GroupName = "Parameters")]
-        public double GreenDotThreshold
-        {
-            get; set;
-        }
-
-        [NinjaScriptProperty]
-        [Range(0.1, 10.0)]
-        [Display(Name = "White Dot Threshold", Description = "Multiplier for EMA to draw a white dot", Order = 7, GroupName = "Parameters")]
-        public double WhiteDotThreshold
-        {
-            get; set;
-        }
-
         [Browsable(false)]
         [XmlIgnore]
         public Series<double> TotalVolume
@@ -435,18 +400,18 @@ namespace NinjaTrader.NinjaScript.Indicators
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
 		private RyFVol[] cacheRyFVol;
-		public RyFVol RyFVol(int totalVolumeOpacity, double threshold, int labelFontSize, int emaPeriod, double highVolumeThreshold, double mediumVolumeThreshold, double greenDotThreshold, double whiteDotThreshold)
+		public RyFVol RyFVol(int totalVolumeOpacity, double threshold, int labelFontSize, int emaPeriod, double highVolumeThreshold, double mediumVolumeThreshold)
 		{
-			return RyFVol(Input, totalVolumeOpacity, threshold, labelFontSize, emaPeriod, highVolumeThreshold, mediumVolumeThreshold, greenDotThreshold, whiteDotThreshold);
+			return RyFVol(Input, totalVolumeOpacity, threshold, labelFontSize, emaPeriod, highVolumeThreshold, mediumVolumeThreshold);
 		}
 
-		public RyFVol RyFVol(ISeries<double> input, int totalVolumeOpacity, double threshold, int labelFontSize, int emaPeriod, double highVolumeThreshold, double mediumVolumeThreshold, double greenDotThreshold, double whiteDotThreshold)
+		public RyFVol RyFVol(ISeries<double> input, int totalVolumeOpacity, double threshold, int labelFontSize, int emaPeriod, double highVolumeThreshold, double mediumVolumeThreshold)
 		{
 			if (cacheRyFVol != null)
 				for (int idx = 0; idx < cacheRyFVol.Length; idx++)
-					if (cacheRyFVol[idx] != null && cacheRyFVol[idx].TotalVolumeOpacity == totalVolumeOpacity && cacheRyFVol[idx].Threshold == threshold && cacheRyFVol[idx].LabelFontSize == labelFontSize && cacheRyFVol[idx].EmaPeriod == emaPeriod && cacheRyFVol[idx].HighVolumeThreshold == highVolumeThreshold && cacheRyFVol[idx].MediumVolumeThreshold == mediumVolumeThreshold && cacheRyFVol[idx].GreenDotThreshold == greenDotThreshold && cacheRyFVol[idx].WhiteDotThreshold == whiteDotThreshold && cacheRyFVol[idx].EqualsInput(input))
+					if (cacheRyFVol[idx] != null && cacheRyFVol[idx].TotalVolumeOpacity == totalVolumeOpacity && cacheRyFVol[idx].Threshold == threshold && cacheRyFVol[idx].LabelFontSize == labelFontSize && cacheRyFVol[idx].EmaPeriod == emaPeriod && cacheRyFVol[idx].HighVolumeThreshold == highVolumeThreshold && cacheRyFVol[idx].MediumVolumeThreshold == mediumVolumeThreshold && cacheRyFVol[idx].EqualsInput(input))
 						return cacheRyFVol[idx];
-			return CacheIndicator<RyFVol>(new RyFVol(){ TotalVolumeOpacity = totalVolumeOpacity, Threshold = threshold, LabelFontSize = labelFontSize, EmaPeriod = emaPeriod, HighVolumeThreshold = highVolumeThreshold, MediumVolumeThreshold = mediumVolumeThreshold, GreenDotThreshold = greenDotThreshold, WhiteDotThreshold = whiteDotThreshold }, input, ref cacheRyFVol);
+			return CacheIndicator<RyFVol>(new RyFVol(){ TotalVolumeOpacity = totalVolumeOpacity, Threshold = threshold, LabelFontSize = labelFontSize, EmaPeriod = emaPeriod, HighVolumeThreshold = highVolumeThreshold, MediumVolumeThreshold = mediumVolumeThreshold }, input, ref cacheRyFVol);
 		}
 	}
 }
@@ -455,14 +420,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.RyFVol RyFVol(int totalVolumeOpacity, double threshold, int labelFontSize, int emaPeriod, double highVolumeThreshold, double mediumVolumeThreshold, double greenDotThreshold, double whiteDotThreshold)
+		public Indicators.RyFVol RyFVol(int totalVolumeOpacity, double threshold, int labelFontSize, int emaPeriod, double highVolumeThreshold, double mediumVolumeThreshold)
 		{
-			return indicator.RyFVol(Input, totalVolumeOpacity, threshold, labelFontSize, emaPeriod, highVolumeThreshold, mediumVolumeThreshold, greenDotThreshold, whiteDotThreshold);
+			return indicator.RyFVol(Input, totalVolumeOpacity, threshold, labelFontSize, emaPeriod, highVolumeThreshold, mediumVolumeThreshold);
 		}
 
-		public Indicators.RyFVol RyFVol(ISeries<double> input , int totalVolumeOpacity, double threshold, int labelFontSize, int emaPeriod, double highVolumeThreshold, double mediumVolumeThreshold, double greenDotThreshold, double whiteDotThreshold)
+		public Indicators.RyFVol RyFVol(ISeries<double> input , int totalVolumeOpacity, double threshold, int labelFontSize, int emaPeriod, double highVolumeThreshold, double mediumVolumeThreshold)
 		{
-			return indicator.RyFVol(input, totalVolumeOpacity, threshold, labelFontSize, emaPeriod, highVolumeThreshold, mediumVolumeThreshold, greenDotThreshold, whiteDotThreshold);
+			return indicator.RyFVol(input, totalVolumeOpacity, threshold, labelFontSize, emaPeriod, highVolumeThreshold, mediumVolumeThreshold);
 		}
 	}
 }
@@ -471,14 +436,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.RyFVol RyFVol(int totalVolumeOpacity, double threshold, int labelFontSize, int emaPeriod, double highVolumeThreshold, double mediumVolumeThreshold, double greenDotThreshold, double whiteDotThreshold)
+		public Indicators.RyFVol RyFVol(int totalVolumeOpacity, double threshold, int labelFontSize, int emaPeriod, double highVolumeThreshold, double mediumVolumeThreshold)
 		{
-			return indicator.RyFVol(Input, totalVolumeOpacity, threshold, labelFontSize, emaPeriod, highVolumeThreshold, mediumVolumeThreshold, greenDotThreshold, whiteDotThreshold);
+			return indicator.RyFVol(Input, totalVolumeOpacity, threshold, labelFontSize, emaPeriod, highVolumeThreshold, mediumVolumeThreshold);
 		}
 
-		public Indicators.RyFVol RyFVol(ISeries<double> input , int totalVolumeOpacity, double threshold, int labelFontSize, int emaPeriod, double highVolumeThreshold, double mediumVolumeThreshold, double greenDotThreshold, double whiteDotThreshold)
+		public Indicators.RyFVol RyFVol(ISeries<double> input , int totalVolumeOpacity, double threshold, int labelFontSize, int emaPeriod, double highVolumeThreshold, double mediumVolumeThreshold)
 		{
-			return indicator.RyFVol(input, totalVolumeOpacity, threshold, labelFontSize, emaPeriod, highVolumeThreshold, mediumVolumeThreshold, greenDotThreshold, whiteDotThreshold);
+			return indicator.RyFVol(input, totalVolumeOpacity, threshold, labelFontSize, emaPeriod, highVolumeThreshold, mediumVolumeThreshold);
 		}
 	}
 }
