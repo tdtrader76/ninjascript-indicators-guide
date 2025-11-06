@@ -21,21 +21,32 @@ using NinjaTrader.Core.FloatingPoint;
 using NinjaTrader.NinjaScript.DrawingTools;
 #endregion
 
-namespace NinjaTrader.NinjaScript.Indicators
-{
-    public class RyFLb : Indicator
-    {
-		#region Enums
-		public enum LabelAlignment
+public enum LabelAlignment
 		{
 			Left,
 			Center,
 			Right
 		}
+
+namespace NinjaTrader.NinjaScript.Indicators
+{
+    public class RyFLb : Indicator
+    {
+		#region Enums
+		
 		#endregion
 
         private int labelFontSize = 16;
         private double lastAD = 0;
+
+		// Variables para cálculos multi-timeframe
+		private double sum30Min = 0;
+		private int count30Min = 0;
+		private double avg30Min = 0;
+
+		private double sumDaily = 0;
+		private int countDaily = 0;
+		private double avgDaily = 0;
 
         protected override void OnStateChange()
         {
@@ -67,27 +78,57 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (CurrentBar < 1)
                     return;
+        
+                // Reset daily accumulators at the start of a new session
+                if (IsFirstBarOfSession)
+                {
+                    sumDaily = 0;
+                    countDaily = 0;
+					avgDaily = 0;
+					
+					// Also reset 30-min accumulator at session start
+					sum30Min = 0;
+					count30Min = 0;
+					avg30Min = 0;
+                }
+				else // Not the first bar of the session, so check for 30-min boundary
+				{
+					// Robustly check for crossing a 30-minute boundary, works for any timeframe
+					var currentBlock = Math.Floor(Time[0].TimeOfDay.TotalMinutes / 30);
+					var previousBlock = Math.Floor(Time[1].TimeOfDay.TotalMinutes / 30);
+
+					if (currentBlock != previousBlock)
+					{
+						sum30Min = 0;
+						count30Min = 0;
+						avg30Min = 0;
+					}
+				}
 
                 double volume = Volume[0];
-
-                // Calculate hi: max between previous close and current high
                 double hi = Math.Max(Close[1], High[0]);
-
-                // Calculate lo: min between previous close and current low
                 double lo = Math.Min(Close[1], Low[0]);
-
-                // Calculate effective volume (accumulation/distribution)
                 double ad = 0;
                 double range = hi - lo;
+
                 if (range > double.Epsilon)
                 {
-                    // Formula: When price rises (Close[0] > Close[1]), AD is positive (accumulation)
                     ad = ((Close[0] - Close[1]) / range) * volume;
                 }
 
-                // Store for label display
-                lastAD = ad;
+                // --- MTF Accumulations ---
+                // Add current bar's effective volume to accumulators
+                sum30Min += ad;
+                count30Min++;
+                sumDaily += ad;
+                countDaily++;
 
+                // Calculate averages, avoiding division by zero
+                avg30Min = (count30Min > 0) ? sum30Min / count30Min : 0;
+                avgDaily = (countDaily > 0) ? sumDaily / countDaily : 0;
+				
+                // Store current value for label display
+                lastAD = ad;
             }
             catch (Exception ex)
             {
@@ -101,19 +142,34 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             if (Bars == null || ChartControl == null || CurrentBar < 1)
                 return;
+			
+			// --- Construir la etiqueta ---
+			StringBuilder labelBuilder = new StringBuilder();
+			
+			// 1. Valor actual
+			labelBuilder.Append($"({lastAD:F0})");
 
-            // Get the chart panel
+			// 2. Valor de 30 minutos (si el timeframe es < 30 min)
+			if (Bars.BarsPeriod.BarsPeriodType == BarsPeriodType.Minute && Bars.BarsPeriod.Value < 30)
+			{
+				labelBuilder.Append($" ({avg30Min:F0})");
+			}
+
+			// 3. Valor diario (si el timeframe es < 1 día)
+			if (Bars.BarsPeriod.BarsPeriodType < BarsPeriodType.Day)
+			{
+				labelBuilder.Append($" ({avgDaily:F0})");
+			}
+			
+			string labelText = labelBuilder.ToString();
+			
+            // --- Lógica de dibujado ---
             ChartPanel panel = chartControl.ChartPanels[chartScale.PanelIndex];
-
-            // Calculate base Y position at the bottom of the panel, then apply offset
             float baseY = panel.Y + panel.H;
-            float finalY = baseY - YOffset; // Subtract because Y=0 is at the top
+            float finalY = baseY - YOffset;
 
-            // Format the label text and choose color
-            string labelText = lastAD.ToString("F0");
             SharpDX.Color labelColor = lastAD > 0 ? SharpDX.Color.ForestGreen : SharpDX.Color.IndianRed;
-
-            // Set font properties
+            
             if (Core.Globals.DirectWriteFactory == null || RenderTarget == null)
                 return;
 
@@ -124,7 +180,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Core.Globals.DirectWriteFactory, fontFamily,
                 SharpDX.DirectWrite.FontWeight.Bold, SharpDX.DirectWrite.FontStyle.Normal, fontSize))
             {
-                // Set alignment for the TextFormat object itself
                 switch (Alignment)
                 {
                     case LabelAlignment.Left:
@@ -138,11 +193,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                         break;
                 }
 
-                // Calculate the full layout box of the text
                 using (SharpDX.DirectWrite.TextLayout textLayout = new SharpDX.DirectWrite.TextLayout(
                     Core.Globals.DirectWriteFactory, labelText, textFormat, panel.W, fontSize))
                 {
-                    // Calculate base X based on panel width and alignment
                     float baseX = 0;
                     switch (Alignment)
                     {
@@ -157,13 +210,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                             break;
                     }
 
-                    // Apply X offset
                     float finalX = baseX + XOffset;
-
-                    // Adjust Y position to be just above the bottom of the panel
                     finalY = finalY - textLayout.Metrics.Height;
 
-                    // Draw the text
                     using (SharpDX.Direct2D1.SolidColorBrush brush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, labelColor))
                     {
                         RenderTarget.DrawTextLayout(
@@ -220,12 +269,12 @@ namespace NinjaTrader.NinjaScript.Indicators
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
 		private RyFLb[] cacheRyFLb;
-		public RyFLb RyFLb(int labelFontSize, NinjaTrader.NinjaScript.Indicators.RyFLb.LabelAlignment alignment, int xOffset, int yOffset)
+		public RyFLb RyFLb(int labelFontSize, LabelAlignment alignment, int xOffset, int yOffset)
 		{
 			return RyFLb(Input, labelFontSize, alignment, xOffset, yOffset);
 		}
 
-		public RyFLb RyFLb(ISeries<double> input, int labelFontSize, NinjaTrader.NinjaScript.Indicators.RyFLb.LabelAlignment alignment, int xOffset, int yOffset)
+		public RyFLb RyFLb(ISeries<double> input, int labelFontSize, LabelAlignment alignment, int xOffset, int yOffset)
 		{
 			if (cacheRyFLb != null)
 				for (int idx = 0; idx < cacheRyFLb.Length; idx++)
@@ -240,12 +289,12 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.RyFLb RyFLb(int labelFontSize, NinjaTrader.NinjaScript.Indicators.RyFLb.LabelAlignment alignment, int xOffset, int yOffset)
+		public Indicators.RyFLb RyFLb(int labelFontSize, LabelAlignment alignment, int xOffset, int yOffset)
 		{
 			return indicator.RyFLb(Input, labelFontSize, alignment, xOffset, yOffset);
 		}
 
-		public Indicators.RyFLb RyFLb(ISeries<double> input , int labelFontSize, NinjaTrader.NinjaScript.Indicators.RyFLb.LabelAlignment alignment, int xOffset, int yOffset)
+		public Indicators.RyFLb RyFLb(ISeries<double> input , int labelFontSize, LabelAlignment alignment, int xOffset, int yOffset)
 		{
 			return indicator.RyFLb(input, labelFontSize, alignment, xOffset, yOffset);
 		}
@@ -256,12 +305,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.RyFLb RyFLb(int labelFontSize, NinjaTrader.NinjaScript.Indicators.RyFLb.LabelAlignment alignment, int xOffset, int yOffset)
+		public Indicators.RyFLb RyFLb(int labelFontSize, LabelAlignment alignment, int xOffset, int yOffset)
 		{
 			return indicator.RyFLb(Input, labelFontSize, alignment, xOffset, yOffset);
 		}
 
-		public Indicators.RyFLb RyFLb(ISeries<double> input , int labelFontSize, NinjaTrader.NinjaScript.Indicators.RyFLb.LabelAlignment alignment, int xOffset, int yOffset)
+		public Indicators.RyFLb RyFLb(ISeries<double> input , int labelFontSize, LabelAlignment alignment, int xOffset, int yOffset)
 		{
 			return indicator.RyFLb(input, labelFontSize, alignment, xOffset, yOffset);
 		}
