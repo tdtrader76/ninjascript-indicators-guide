@@ -25,6 +25,15 @@ namespace NinjaTrader.NinjaScript.Indicators
 {
     public class RyFLb : Indicator
     {
+		#region Enums
+		public enum LabelAlignment
+		{
+			Left,
+			Center,
+			Right
+		}
+		#endregion
+
         private int labelFontSize = 16;
         private double lastAD = 0;
 
@@ -46,6 +55,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 // Default values
                 LabelFontSize = 16;
+                Alignment = LabelAlignment.Center;
+                XOffset = 0;
+                YOffset = 0;
             }
         }
 
@@ -76,10 +88,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // Store for label display
                 lastAD = ad;
 
-                // --- Nueva lógica de dibujo ---
-                Brush textColor = lastAD > 0 ? Brushes.Green : Brushes.Red;
-                string labelText = lastAD.ToString("F0");
-                Draw.TextFixed(this, "EffectiveVolumeLabel", labelText, TextPosition.BottomCenter, textColor, new SimpleFont("Arial", LabelFontSize), Brushes.Transparent, Brushes.Transparent, 0);
             }
             catch (Exception ex)
             {
@@ -87,16 +95,119 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
+        protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
+        {
+            base.OnRender(chartControl, chartScale);
+
+            if (Bars == null || ChartControl == null || CurrentBar < 1)
+                return;
+
+            // Get the chart panel
+            ChartPanel panel = chartControl.ChartPanels[chartScale.PanelIndex];
+
+            // Calculate base Y position at the bottom of the panel, then apply offset
+            float baseY = panel.Y + panel.H;
+            float finalY = baseY - YOffset; // Subtract because Y=0 is at the top
+
+            // Format the label text and choose color
+            string labelText = lastAD.ToString("F0");
+            SharpDX.Color labelColor = lastAD > 0 ? SharpDX.Color.ForestGreen : SharpDX.Color.IndianRed;
+
+            // Set font properties
+            if (Core.Globals.DirectWriteFactory == null || RenderTarget == null)
+                return;
+
+            string fontFamily = "Arial";
+            float fontSize = (float)LabelFontSize;
+
+            using (SharpDX.DirectWrite.TextFormat textFormat = new SharpDX.DirectWrite.TextFormat(
+                Core.Globals.DirectWriteFactory, fontFamily,
+                SharpDX.DirectWrite.FontWeight.Bold, SharpDX.DirectWrite.FontStyle.Normal, fontSize))
+            {
+                // Set alignment for the TextFormat object itself
+                switch (Alignment)
+                {
+                    case LabelAlignment.Left:
+                        textFormat.TextAlignment = SharpDX.DirectWrite.TextAlignment.Leading;
+                        break;
+                    case LabelAlignment.Center:
+                        textFormat.TextAlignment = SharpDX.DirectWrite.TextAlignment.Center;
+                        break;
+                    case LabelAlignment.Right:
+                        textFormat.TextAlignment = SharpDX.DirectWrite.TextAlignment.Trailing;
+                        break;
+                }
+
+                // Calculate the full layout box of the text
+                using (SharpDX.DirectWrite.TextLayout textLayout = new SharpDX.DirectWrite.TextLayout(
+                    Core.Globals.DirectWriteFactory, labelText, textFormat, panel.W, fontSize))
+                {
+                    // Calculate base X based on panel width and alignment
+                    float baseX = 0;
+                    switch (Alignment)
+                    {
+                        case LabelAlignment.Left:
+                            baseX = panel.X;
+                            break;
+                        case LabelAlignment.Center:
+                            baseX = panel.X + (panel.W / 2);
+                            break;
+                        case LabelAlignment.Right:
+                            baseX = panel.X + panel.W;
+                            break;
+                    }
+
+                    // Apply X offset
+                    float finalX = baseX + XOffset;
+
+                    // Adjust Y position to be just above the bottom of the panel
+                    finalY = finalY - textLayout.Metrics.Height;
+
+                    // Draw the text
+                    using (SharpDX.Direct2D1.SolidColorBrush brush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, labelColor))
+                    {
+                        RenderTarget.DrawTextLayout(
+                            new SharpDX.Vector2(finalX, finalY),
+                            textLayout,
+                            brush,
+                            SharpDX.Direct2D1.DrawTextOptions.NoSnap);
+                    }
+                }
+            }
+        }
 
         #region Properties
 
         [NinjaScriptProperty]
         [Range(8, 72)]
-        [Display(Name = "Label Font Size", Description = "Font size for the volume label", Order = 3, GroupName = "Visual")]
+        [Display(Name = "Label Font Size", Description = "Font size for the volume label", Order = 1, GroupName = "Visual")]
         public int LabelFontSize
         {
             get { return labelFontSize; }
             set { labelFontSize = Math.Max(8, Math.Min(72, value)); }
+        }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Alignment", Description = "Horizontal alignment of the label", Order = 2, GroupName = "Visual")]
+        public LabelAlignment Alignment
+        {
+            get; set;
+        }
+
+        [NinjaScriptProperty]
+        [Range(-1000, 1000)]
+        [Display(Name = "X Offset", Description = "Horizontal offset in pixels", Order = 3, GroupName = "Visual")]
+        public int XOffset
+        {
+            get; set;
+        }
+
+        [NinjaScriptProperty]
+        [Range(-1000, 1000)]
+        [Display(Name = "Y Offset", Description = "Vertical offset in pixels", Order = 4, GroupName = "Visual")]
+        public int YOffset
+        {
+            get; set;
         }
         #endregion
     }
@@ -109,18 +220,18 @@ namespace NinjaTrader.NinjaScript.Indicators
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
 		private RyFLb[] cacheRyFLb;
-		public RyFLb RyFLb(int labelFontSize)
+		public RyFLb RyFLb(int labelFontSize, NinjaTrader.NinjaScript.Indicators.RyFLb.LabelAlignment alignment, int xOffset, int yOffset)
 		{
-			return RyFLb(Input, labelFontSize);
+			return RyFLb(Input, labelFontSize, alignment, xOffset, yOffset);
 		}
 
-		public RyFLb RyFLb(ISeries<double> input, int labelFontSize)
+		public RyFLb RyFLb(ISeries<double> input, int labelFontSize, NinjaTrader.NinjaScript.Indicators.RyFLb.LabelAlignment alignment, int xOffset, int yOffset)
 		{
 			if (cacheRyFLb != null)
 				for (int idx = 0; idx < cacheRyFLb.Length; idx++)
-					if (cacheRyFLb[idx] != null && cacheRyFLb[idx].LabelFontSize == labelFontSize && cacheRyFLb[idx].EqualsInput(input))
+					if (cacheRyFLb[idx] != null && cacheRyFLb[idx].LabelFontSize == labelFontSize && cacheRyFLb[idx].Alignment == alignment && cacheRyFLb[idx].XOffset == xOffset && cacheRyFLb[idx].YOffset == yOffset && cacheRyFLb[idx].EqualsInput(input))
 						return cacheRyFLb[idx];
-			return CacheIndicator<RyFLb>(new RyFLb(){ LabelFontSize = labelFontSize }, input, ref cacheRyFLb);
+			return CacheIndicator<RyFLb>(new RyFLb(){ LabelFontSize = labelFontSize, Alignment = alignment, XOffset = xOffset, YOffset = yOffset }, input, ref cacheRyFLb);
 		}
 	}
 }
@@ -129,14 +240,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.RyFLb RyFLb(int labelFontSize)
+		public Indicators.RyFLb RyFLb(int labelFontSize, NinjaTrader.NinjaScript.Indicators.RyFLb.LabelAlignment alignment, int xOffset, int yOffset)
 		{
-			return indicator.RyFLb(Input, labelFontSize);
+			return indicator.RyFLb(Input, labelFontSize, alignment, xOffset, yOffset);
 		}
 
-		public Indicators.RyFLb RyFLb(ISeries<double> input , int labelFontSize)
+		public Indicators.RyFLb RyFLb(ISeries<double> input , int labelFontSize, NinjaTrader.NinjaScript.Indicators.RyFLb.LabelAlignment alignment, int xOffset, int yOffset)
 		{
-			return indicator.RyFLb(input, labelFontSize);
+			return indicator.RyFLb(input, labelFontSize, alignment, xOffset, yOffset);
 		}
 	}
 }
@@ -145,14 +256,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.RyFLb RyFLb(int labelFontSize)
+		public Indicators.RyFLb RyFLb(int labelFontSize, NinjaTrader.NinjaScript.Indicators.RyFLb.LabelAlignment alignment, int xOffset, int yOffset)
 		{
-			return indicator.RyFLb(Input, labelFontSize);
+			return indicator.RyFLb(Input, labelFontSize, alignment, xOffset, yOffset);
 		}
 
-		public Indicators.RyFLb RyFLb(ISeries<double> input , int labelFontSize)
+		public Indicators.RyFLb RyFLb(ISeries<double> input , int labelFontSize, NinjaTrader.NinjaScript.Indicators.RyFLb.LabelAlignment alignment, int xOffset, int yOffset)
 		{
-			return indicator.RyFLb(input, labelFontSize);
+			return indicator.RyFLb(input, labelFontSize, alignment, xOffset, yOffset);
 		}
 	}
 }
