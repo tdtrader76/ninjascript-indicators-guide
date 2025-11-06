@@ -53,6 +53,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             try
             {
+                if (Bars.IsFirstBarOfSession)
+                {
+                    lastAD = 0;
+                }
+
                 if (CurrentBar < 1)
                     return;
 
