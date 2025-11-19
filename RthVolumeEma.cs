@@ -30,10 +30,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 {
 	public class RthVolumeEma : Indicator
 	{
+		// Variables para el modo EMA contínua
 		private double lastEmaValue;
-		private TimeZoneInfo targetTimeZone;
 		private double multiplier;
 		private bool isFirstRthBar;
+
+		// Variables para el modo de reinicio por sesión
+		private double sessionAccumulatedVolume;
+		private int sessionBarCount;
+
+		// Variables comunes
+		private TimeZoneInfo targetTimeZone;
+		private bool wasInRth;
+
 
 		protected override void OnStateChange()
 		{
@@ -55,6 +64,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				StartTime = 1530;
 				EndTime = 2200;
 				TargetTimeZoneId = "Central European Standard Time";
+				ResetOnSession = false;
 
 				AddPlot(new Stroke(Brushes.DodgerBlue, 2), PlotStyle.Line, "EmaValue");
 			}
@@ -63,9 +73,16 @@ namespace NinjaTrader.NinjaScript.Indicators
 			}
 			else if (State == State.DataLoaded)
 			{
+				// Inicialización para el modo EMA
 				lastEmaValue = 0;
 				multiplier = 2.0 / (EmaPeriod + 1);
 				isFirstRthBar = true;
+
+				// Inicialización para el modo de reinicio
+				sessionAccumulatedVolume = 0;
+				sessionBarCount = 0;
+				wasInRth = false;
+
 				try
 				{
 					targetTimeZone = TimeZoneInfo.FindSystemTimeZoneById(TargetTimeZoneId);
@@ -85,22 +102,57 @@ namespace NinjaTrader.NinjaScript.Indicators
 			}
 
 			DateTime barTimeInTargetZone = TimeZoneInfo.ConvertTimeFromUtc(Time[0], targetTimeZone);
-		int timeAsInt = barTimeInTargetZone.Hour * 100 + barTimeInTargetZone.Minute;
+			int timeAsInt = barTimeInTargetZone.Hour * 100 + barTimeInTargetZone.Minute;
+			bool isInRth = (timeAsInt >= StartTime && timeAsInt <= EndTime);
 
-			if (timeAsInt >= StartTime && timeAsInt <= EndTime)
+			if (ResetOnSession)
 			{
-				if (isFirstRthBar)
+				// --- MODO: REINICIO POR SESIÓN (Media de Volumen Acumulado) ---
+
+				// Detectar el inicio de una nueva sesión RTH
+				if (isInRth && !wasInRth)
 				{
-					lastEmaValue = Volume[0];
-					isFirstRthBar = false;
+					// Es la primera barra de la sesión, reiniciar contadores
+					sessionAccumulatedVolume = Volume[0];
+					sessionBarCount = 1;
+					isFirstRthBar = false; // Indica que ya podemos empezar a dibujar
 				}
-				else
+				// Si estamos dentro de una sesión ya iniciada
+				else if (isInRth && wasInRth)
 				{
-					double currentVolume = Volume[0];
-					lastEmaValue = (currentVolume * multiplier) + (lastEmaValue * (1 - multiplier));
+					sessionAccumulatedVolume += Volume[0];
+					sessionBarCount++;
+				}
+
+				// Calcular el valor solo si estamos en la sesión
+				if (isInRth)
+				{
+					 if (sessionBarCount > 0)
+						lastEmaValue = sessionAccumulatedVolume / sessionBarCount;
+				}
+			}
+			else
+			{
+				// --- MODO: EMA CONTINUA (Lógica Original) ---
+				if (isInRth)
+				{
+					if (isFirstRthBar)
+					{
+						lastEmaValue = Volume[0];
+						isFirstRthBar = false;
+					}
+					else
+					{
+						double currentVolume = Volume[0];
+						lastEmaValue = (currentVolume * multiplier) + (lastEmaValue * (1 - multiplier));
+					}
 				}
 			}
 
+			// Actualizar el estado para la próxima barra
+			wasInRth = isInRth;
+
+			// Dibujar el valor si ya ha sido calculado al menos una vez
 			if (!isFirstRthBar)
 			{
 				Value[0] = lastEmaValue;
@@ -126,6 +178,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 		[NinjaScriptProperty]
 		[Display(Name="Zona Horaria", Description="Zona horaria para el cálculo (ej. 'Central European Standard Time').", Order=4, GroupName="Parámetros")]
 		public string TargetTimeZoneId { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name="Reiniciar en cada sesión", Description="Si es verdadero, reinicia el cálculo al inicio de cada sesión RTH. Si es falso, continúa el cálculo de la EMA del día anterior.", Order=5, GroupName="Parámetros")]
+		public bool ResetOnSession { get; set; }
 
 		[Browsable(false)]
 		[XmlIgnore]
